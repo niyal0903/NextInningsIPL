@@ -1,0 +1,7 @@
+echo "speechrecognition
+pywin32
+numpy
+pandas
+scikit-learn
+requests
+beautifulsoup4" > requirements.txt

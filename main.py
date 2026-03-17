@@ -1,179 +1,14 @@
+
 # import speech_recognition as sr
 # import threading
 # import pythoncom
 # import win32com.client
 # import os
 # import time
-# import json
-# import zipfile
-# import numpy as np
-# import pandas as pd
-# import requests
-# from bs4 import BeautifulSoup
-# from sklearn.linear_model import LinearRegression
 
-# # -------- NAME MAP --------
-# name_map = {
-#     "virat kohli": "v kohli",
-#     "rohit sharma": "ro sharma",
-#     "ms dhoni": "ms dhoni",
-#     "suresh raina": "su raina",
-#     "gautam gambhir": "g gambhir",
-#     "shikhar dhawan": "s dhawan",
-#     "david warner": "da warner",
-#     "ab de villiers": "ab de villiers",
-#     "yuvraj singh": "yuvraj singh",
-#     "hardik pandya": "h pandya",
-# }
-
-# ZIP_PATH = r"N:\mega project jarvis\cricketagent\data\ipl.json.zip.zip"
-
-# # -------- RUNS FETCH FUNCTION --------
-# def fetch_innings_runs(player):
-#     player_lower = player.lower().strip()
-#     mapped = name_map.get(player_lower, player_lower)
-#     innings_runs = []
-
-#     with zipfile.ZipFile(ZIP_PATH, "r") as z:
-#         for filename in z.namelist():
-#             if not filename.endswith(".json"):
-#                 continue
-#             try:
-#                 with z.open(filename) as f:
-#                     match = json.load(f)
-#                 for innings in match.get("innings", []):
-#                     total = 0
-#                     played = False
-#                     for over in innings.get("overs", []):
-#                         for ball in over.get("deliveries", []):
-#                             batter = ball.get("batter", "").lower().strip()
-#                             if batter == mapped:
-#                                 total += ball.get("runs", {}).get("batter", 0)
-#                                 played = True
-#                     if played:
-#                         innings_runs.append(total)
-#             except:
-#                 continue
-
-#     return innings_runs
-
-# # -------- PLAYER STATS --------
-# def get_player_stats(player):
-#     innings_runs = fetch_innings_runs(player)
-#     if not innings_runs:
-#         return None
-#     last5 = innings_runs[-5:]
-#     avg = sum(innings_runs) / len(innings_runs)
-#     highest = max(innings_runs)
-#     return last5, avg, highest
-
-# # -------- ML PREDICTION --------
-# def predict_next_score(player):
-#     innings_runs = fetch_innings_runs(player)
-#     if len(innings_runs) < 5:
-#         return None
-
-#     df = pd.DataFrame({
-#         "innings_no": np.arange(1, len(innings_runs) + 1),
-#         "runs": innings_runs
-#     })
-
-#     model = LinearRegression()
-#     model.fit(df[["innings_no"]], df["runs"])
-#     predicted = model.predict([[len(innings_runs) + 1]])[0]
-#     return round(predicted, 1)
-
-# # -------- PLAYER COMPARISON --------
-# def compare_players(player1, player2):
-#     runs1 = fetch_innings_runs(player1)
-#     runs2 = fetch_innings_runs(player2)
-
-#     if not runs1 or not runs2:
-#         return "Ek ya dono players ka data nahi mila sir"
-
-#     avg1 = round(sum(runs1) / len(runs1), 2)
-#     avg2 = round(sum(runs2) / len(runs2), 2)
-#     high1 = max(runs1)
-#     high2 = max(runs2)
-#     better = player1 if avg1 > avg2 else player2
-
-#     return (f"{player1} average {avg1} highest {high1}. "
-#             f"{player2} average {avg2} highest {high2}. "
-#             f"{better} is better based on average.")
-
-# # -------- LIVE SCORE - FREE WEB SCRAPING --------
-# def get_live_score():
-#     try:
-#         headers = {"User-Agent": "Mozilla/5.0"}
-#         url = "https://www.espncricinfo.com/live-cricket-score"
-#         res = requests.get(url, headers=headers, timeout=5)
-#         soup = BeautifulSoup(res.text, "html.parser")
-
-#         matches = soup.find_all("div", class_="ds-p-4")
-#         if not matches:
-#             return "Abhi koi live match nahi hai sir"
-
-#         result = ""
-#         for m in matches[:2]:
-#             text = m.get_text(separator=" ", strip=True)
-#             if text:
-#                 result += text[:150] + ". "
-
-#         return result if result else "Live score nahi mila sir"
-
-#     except Exception as e:
-#         print("Live score error:", e)
-#         return "Live score fetch karne mein problem hui sir"
-
-# # -------- MATCH SCHEDULE - FREE WEB SCRAPING --------
-# def get_match_schedule():
-#     try:
-#         headers = {"User-Agent": "Mozilla/5.0"}
-#         url = "https://www.espncricinfo.com/series/ipl-2026"
-#         res = requests.get(url, headers=headers, timeout=5)
-#         soup = BeautifulSoup(res.text, "html.parser")
-
-#         matches = soup.find_all("div", class_="ds-p-4")
-#         if not matches:
-#             return "Schedule nahi mila sir"
-
-#         result = "Upcoming IPL 2026 matches: "
-#         for m in matches[:3]:
-#             text = m.get_text(separator=" ", strip=True)
-#             if text:
-#                 result += text[:100] + ". "
-
-#         return result if result else "Schedule nahi mila sir"
-
-#     except Exception as e:
-#         print("Schedule error:", e)
-#         return "Schedule fetch karne mein problem hui sir"
-
-# # -------- POINTS TABLE - FREE WEB SCRAPING --------
-# def get_points_table():
-#     try:
-#         headers = {"User-Agent": "Mozilla/5.0"}
-#         url = "https://www.espncricinfo.com/series/ipl-2026/points-table"
-#         res = requests.get(url, headers=headers, timeout=5)
-#         soup = BeautifulSoup(res.text, "html.parser")
-
-#         rows = soup.find_all("tr")
-#         if not rows:
-#             return "Points table nahi mila sir"
-
-#         result = "IPL 2026 points table: "
-#         for i, row in enumerate(rows[1:6], 1):
-#             cols = row.find_all("td")
-#             if cols:
-#                 team = cols[0].get_text(strip=True)
-#                 pts = cols[-1].get_text(strip=True)
-#                 result += f"{i}. {team} {pts} points. "
-
-#         return result if result else "Points table nahi mila sir"
-
-#     except Exception as e:
-#         print("Points table error:", e)
-#         return "Points table fetch karne mein problem hui sir"
+# # -------- ALAG FILES SE IMPORT --------
+# from engine import fetch_innings_runs, get_player_stats, predict_next_score, compare_players, get_bowling_stats, predict_next_wickets
+# from scraper import get_live_score, get_match_schedule, get_points_table
 
 # # -------- JARVIS VOICE LOOP --------
 # def jarvis_loop():
@@ -233,25 +68,44 @@
 #                 else:
 #                     speak("Please say two player names with and in between sir")
 
-#             # ML Prediction
-#             elif any(word in command for word in ["predict", "prediction", "next score", "next innings"]):
-#                 speak("Which player to predict sir?")
+#             # ML Prediction — batting ya bowling dono
+#             elif any(word in command for word in [
+#                 "predict", "prediction", "next score",
+#                 "next innings", "predict bowling", "next wicket",
+#                 "bowling prediction", "wicket prediction"
+#             ]):
+#                 speak("Which player sir?")
 #                 with sr.Microphone() as source:
 #                     audio = recognizer.listen(source)
-#                 player = recognizer.recognize_google(audio, language="en-IN").strip()
+#                 player = recognizer.recognize_google(
+#                     audio, language="en-IN").strip()
 #                 print("Player:", player)
-#                 speak(f"Predicting next score for {player} sir")
-#                 predicted = predict_next_score(player)
-#                 if predicted:
-#                     speak(f"{player} predicted next innings score is {predicted} runs sir")
+#                 speak("Batting prediction chahiye ya bowling sir?")
+#                 with sr.Microphone() as source:
+#                     audio = recognizer.listen(source)
+#                 pred_type = recognizer.recognize_google(
+#                     audio, language="en-IN").lower().strip()
+#                 print("Type:", pred_type)
+#                 if "bowl" in pred_type or "wicket" in pred_type:
+#                     speak(f"Predicting wickets for {player} sir")
+#                     predicted = predict_next_wickets(player)
+#                     if predicted:
+#                         speak(f"{player} next match mein {predicted} wickets predicted hain sir")
+#                     else:
+#                         speak("Not enough bowling data to predict sir")
 #                 else:
-#                     speak("Not enough data to predict sir")
+#                     speak(f"Predicting next score for {player} sir")
+#                     predicted = predict_next_score(player)
+#                     if predicted:
+#                         speak(f"{player} predicted next innings score is {predicted} runs sir")
+#                     else:
+#                         speak("Not enough data to predict sir")
 
 #             # Player Stats
 #             elif any(word in command for word in [
 #                 "player status", "player stats", "player statistic",
 #                 "player statistics", "player state", "player record",
-#                 "player performance", "cricket player stats"
+#                 "player performance", "cricket player stats",
 #             ]):
 #                 speak("Which player sir")
 #                 with sr.Microphone() as source:
@@ -267,6 +121,72 @@
 #                     speak(f"Highest run {highest}")
 #                 else:
 #                     speak("Player data not found")
+
+#             # Bowling Stats
+#             elif any(word in command for word in [
+#                 "bowling stats", "bowling record", "bowling performance",
+#                 "kitne wickets", "bowler stats", "bowling figures",
+#                 "performance", "wickets"
+#             ]):
+#                 speak("Which player sir")
+#                 with sr.Microphone() as source:
+#                     print("Listening player name...")
+#                     audio = recognizer.listen(source)
+#                 player = recognizer.recognize_google(audio, language="en-IN").strip()
+#                 print("Player:", player)
+#                 stats = get_bowling_stats(player)
+#                 if stats:
+#                     speak(f"{player} bowling stats sir")
+#                     speak(f"Total wickets {stats['total_wickets']}")
+#                     speak(f"Best bowling {stats['best_bowling']} wickets in a match")
+#                     speak(f"Economy rate {stats['economy']} runs per over")
+#                     speak(f"Bowling average {stats['bowling_average']}")
+#                     speak(f"Three wicket hauls {stats['three_fers']}")
+#                     speak(f"Last 5 innings wickets {stats['wickets_list']}")
+#                 else:
+#                     speak(f"{player} ka bowling data nahi mila sir")
+
+#             # Full Stats — batting + bowling dono
+#             elif any(word in command for word in [
+#                 "full stats", "complete stats", "all round",
+#                 "allrounder", "batting bowling", "dono stats",
+#                 "full performance", "poori stats"
+#             ]):
+#                 speak("Which player sir?")
+#                 with sr.Microphone() as source:
+#                     audio = recognizer.listen(source)
+#                 player = recognizer.recognize_google(
+#                     audio, language="en-IN").strip()
+#                 print("Player:", player)
+#                 speak(f"Fetching complete stats for {player} sir please wait")
+#                 bat_stats = get_player_stats(player)
+#                 if bat_stats:
+#                     last5, avg, highest = bat_stats
+#                     runs = fetch_innings_runs(player)
+#                     fifties = sum(1 for r in runs if r >= 50)
+#                     hundreds = sum(1 for r in runs if r >= 100)
+#                     ducks = sum(1 for r in runs if r == 0)
+#                     speak(f"Batting stats sir")
+#                     speak(f"Total innings {len(runs)}")
+#                     speak(f"Average {avg}")
+#                     speak(f"Highest score {highest}")
+#                     speak(f"Fifties {fifties}")
+#                     speak(f"Hundreds {hundreds}")
+#                     speak(f"Ducks {ducks}")
+#                     speak(f"Last 5 innings {last5}")
+#                 else:
+#                     speak(f"{player} ka batting data nahi mila sir")
+#                 bowl_stats = get_bowling_stats(player)
+#                 if bowl_stats:
+#                     speak(f"Bowling stats sir")
+#                     speak(f"Total wickets {bowl_stats['total_wickets']}")
+#                     speak(f"Best bowling {bowl_stats['best_bowling']} wickets in a match")
+#                     speak(f"Economy rate {bowl_stats['economy']}")
+#                     speak(f"Bowling average {bowl_stats['bowling_average']}")
+#                     speak(f"Three wicket hauls {bowl_stats['three_fers']}")
+#                     speak(f"Last 5 innings wickets {bowl_stats['wickets_list']}")
+#                 else:
+#                     speak(f"{player} bowling nahi karte sir")
 
 #             # Exit
 #             elif any(word in command for word in ["exit", "stop", "bye", "goodbye"]):
@@ -291,8 +211,7 @@
 
 
 
-# jarvis.py
-# jarvis.py
+
 import speech_recognition as sr
 import threading
 import pythoncom
@@ -303,6 +222,7 @@ import time
 # -------- ALAG FILES SE IMPORT --------
 from engine import fetch_innings_runs, get_player_stats, predict_next_score, compare_players, get_bowling_stats, predict_next_wickets
 from scraper import get_live_score, get_match_schedule, get_points_table
+from graphs import show_batting_graph, show_bowling_graph  # <-- NAYA
 
 # -------- JARVIS VOICE LOOP --------
 def jarvis_loop():
@@ -481,6 +401,44 @@ def jarvis_loop():
                     speak(f"Last 5 innings wickets {bowl_stats['wickets_list']}")
                 else:
                     speak(f"{player} bowling nahi karte sir")
+
+            # Batting Graph  — NAYA
+            elif any(word in command for word in [
+                "batting graph", "run graph", "batting chart",
+                "runs dikhao", "batting stats graph", "batting history",
+                "graph dikhao batting", "show batting graph"
+            ]):
+                speak("Which player sir?")
+                with sr.Microphone() as source:
+                    print("Listening player name...")
+                    audio = recognizer.listen(source)
+                player = recognizer.recognize_google(audio, language="en-IN").strip()
+                print("Player:", player)
+                speak(f"Showing batting graph for {player} sir please wait")
+                result = show_batting_graph(player)
+                if result:
+                    speak(f"{player} ka batting graph ready hai sir")
+                else:
+                    speak(f"{player} ka batting data nahi mila sir")
+
+            # Bowling Graph  — NAYA
+            elif any(word in command for word in [
+                "bowling graph", "wicket graph", "bowling chart",
+                "wickets dikhao", "bowling stats graph", "bowling history",
+                "graph dikhao bowling", "show bowling graph", "bowler graph"
+            ]):
+                speak("Which player sir?")
+                with sr.Microphone() as source:
+                    print("Listening player name...")
+                    audio = recognizer.listen(source)
+                player = recognizer.recognize_google(audio, language="en-IN").strip()
+                print("Player:", player)
+                speak(f"Showing bowling graph for {player} sir please wait")
+                result = show_bowling_graph(player)
+                if result:
+                    speak(f"{player} ka bowling graph ready hai sir")
+                else:
+                    speak(f"{player} ka bowling data nahi mila sir")
 
             # Exit
             elif any(word in command for word in ["exit", "stop", "bye", "goodbye"]):

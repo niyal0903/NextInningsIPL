@@ -1,3 +1,102 @@
+# import speech_recognition as sr
+# import threading
+# import pythoncom
+# import win32com.client
+# import os
+# import re
+# import time
+# from ddgs import DDGS 
+
+# # -------- ALAG FILES SE IMPORT --------
+# from engine import fetch_innings_runs, get_player_stats, predict_next_score, compare_players, get_bowling_stats, predict_next_wickets
+# from scraper import get_live_score, get_match_schedule, get_points_table
+# from graphs import show_batting_graph, show_bowling_graph
+
+# # --- THE 100% NO-BLOCK SCORE EXTRACTOR ---
+# def online_search_direct(query):
+#     try:
+#         # Hum query ko bahut specific rakhenge taaki DuckDuckGo seedha answer de
+#         search_query = f"IPL 2026 {query} live score teams runs overs"
+        
+#         with DDGS() as ddgs:
+#             # Hum 8 results scan karenge taaki "Protected" data ko skip karke Asli Score dhoondein
+#             results = list(ddgs.text(search_query, max_results=8))
+            
+#             if results:
+#                 for r in results:
+#                     body = r.get('body', '').lower()
+#                     title = r.get('title', '').lower()
+#                     combined = title + " " + body
+                    
+#                     # LOGIC: Check if it contains both a Score (/) and Team Names/VS
+#                     if ("/" in combined or "overs" in combined) and ("vs" in combined or "beat" in combined or "won" in combined):
+                        
+#                         # CLEANING: Faltu ki website descriptions hatana
+#                         garbage = ["view all", "cricbuzz", "ball-by-ball", "full coverage", "stay updated", "summary", "1 hour ago", "minutes ago", "subscription"]
+#                         for word in garbage:
+#                             combined = re.sub(word, '', combined, flags=re.IGNORECASE)
+                        
+#                         # Clean links
+#                         clean_ans = re.sub(r'http\S+', '', combined)
+                        
+#                         # Sirf pehle 22 words (Short & Clear Answer)
+#                         final_msg = " ".join(clean_ans.split()[:22])
+#                         return final_msg.strip()
+
+#             return "Sir, match is live but scoreboard is currently hidden by the server. Trying again..."
+#     except Exception as e:
+#         return "Sir, connection link broken. Please check if firewall is blocking Jarvis."
+
+# # -------- JARVIS VOICE LOOP --------
+# def jarvis_loop():
+#     pythoncom.CoInitialize()
+#     speaker = win32com.client.Dispatch("SAPI.SpVoice")
+
+#     def speak(text):
+#         print("Jarvis:", text)
+#         speaker.Speak(text)
+
+#     recognizer = sr.Recognizer()
+#     recognizer.dynamic_energy_threshold = True 
+    
+#     speak("Jarvis is online. 100 percent working live link established.")
+
+#     while True:
+#         try:
+#             with sr.Microphone() as source:
+#                 print("Listening...")
+#                 recognizer.adjust_for_ambient_noise(source, duration=0.5)
+#                 audio = recognizer.listen(source, timeout=10, phrase_time_limit=8)
+
+#             print("Recognizing...")
+#             command = recognizer.recognize_google(audio, language="en-IN").lower().strip()
+#             print("You said:", command)
+
+#             if "jarvis" in command:
+#                 speak("Yes sir")
+
+#             # --- THE 100% FIXED SCORE COMMAND ---
+#             elif any(word in command for word in ["score", "match kya hua", "kya score hai"]):
+#                 speak("Fetching live scoreboard...")
+#                 # Search directly for current score
+#                 ans = online_search_direct("current match score")
+#                 speak(f"Sir, {ans}")
+
+#             # --- EXIT ---
+#             elif any(word in command for word in ["exit", "stop", "bye"]):
+#                 speak("Goodbye sir")
+#                 os._exit(0)
+
+#         except:
+#             pass
+
+# # Start the thread
+# voice_thread = threading.Thread(target=jarvis_loop)
+# voice_thread.daemon = True
+# voice_thread.start()
+
+# while True:
+#     time.sleep(1)
 import speech_recognition as sr
 import threading
 import pythoncom
@@ -7,45 +106,36 @@ import re
 import time
 from ddgs import DDGS 
 
-# -------- ALAG FILES SE IMPORT --------
-from engine import fetch_innings_runs, get_player_stats, predict_next_score, compare_players, get_bowling_stats, predict_next_wickets
-from scraper import get_live_score, get_match_schedule, get_points_table
-from graphs import show_batting_graph, show_bowling_graph
-
-# --- THE 100% NO-BLOCK SCORE EXTRACTOR ---
+# --- THE UNSTOPPABLE BATTING-FOCUSED SCORE EXTRACTOR ---
 def online_search_direct(query):
     try:
-        # Hum query ko bahut specific rakhenge taaki DuckDuckGo seedha answer de
-        search_query = f"IPL 2026 {query} live score teams runs overs"
+        # Hum specifically 'Batting Status' aur 'Live Score' mangwayenge
+        search_query = f"IPL 2026 live score today match scorecard batting team overs"
         
         with DDGS() as ddgs:
-            # Hum 8 results scan karenge taaki "Protected" data ko skip karke Asli Score dhoondein
-            results = list(ddgs.text(search_query, max_results=8))
+            # News headlines mein hamesha current team batting ki info hoti hai
+            results = list(ddgs.news(search_query, max_results=6))
             
             if results:
                 for r in results:
-                    body = r.get('body', '').lower()
-                    title = r.get('title', '').lower()
-                    combined = title + " " + body
-                    
-                    # LOGIC: Check if it contains both a Score (/) and Team Names/VS
-                    if ("/" in combined or "overs" in combined) and ("vs" in combined or "beat" in combined or "won" in combined):
-                        
-                        # CLEANING: Faltu ki website descriptions hatana
-                        garbage = ["view all", "cricbuzz", "ball-by-ball", "full coverage", "stay updated", "summary", "1 hour ago", "minutes ago", "subscription"]
-                        for word in garbage:
-                            combined = re.sub(word, '', combined, flags=re.IGNORECASE)
-                        
-                        # Clean links
-                        clean_ans = re.sub(r'http\S+', '', combined)
-                        
-                        # Sirf pehle 22 words (Short & Clear Answer)
-                        final_msg = " ".join(clean_ans.split()[:22])
-                        return final_msg.strip()
+                    title = r.get('title', '')
+                    # LOGIC: Check if title contains Score (/), VS, Batting, or Overs
+                    if any(x in title.lower() for x in ["/", "vs", "batting", "overs", "needs", "won by"]):
+                        # Cleaning: Unnecessary sources hatana
+                        clean_ans = title.replace("Cricbuzz", "").replace("IPL 2026:", "").strip()
+                        return clean_ans
 
-            return "Sir, match is live but scoreboard is currently hidden by the server. Trying again..."
-    except Exception as e:
-        return "Sir, connection link broken. Please check if firewall is blocking Jarvis."
+            # Fallback: Agar news slow ho toh text search check karo
+            text_results = list(ddgs.text(search_query, max_results=3))
+            if text_results:
+                for tr in text_results:
+                    body = tr.get('body', '')
+                    if "/" in body or "batting" in body.lower():
+                        return " ".join(body.split()[:20])
+
+            return "Sir, live update is coming in. Please ask again in a moment."
+    except Exception:
+        return "Sir, I'm unable to reach the live match server right now."
 
 # -------- JARVIS VOICE LOOP --------
 def jarvis_loop():
@@ -53,13 +143,21 @@ def jarvis_loop():
     speaker = win32com.client.Dispatch("SAPI.SpVoice")
 
     def speak(text):
-        print("Jarvis:", text)
+        # Format display: Agar score ya batting info hai toh box mein dikhao
+        if any(x in text.lower() for x in ["/", "vs", "batting", "overs", "won"]):
+            display_text = text.replace("Sir, ", "").strip()
+            print("\n" + "═"*65)
+            print(f"🏏  LIVE STATUS: {display_text}")
+            print("═"*65 + "\n")
+        else:
+            print("Jarvis:", text)
+        
         speaker.Speak(text)
 
     recognizer = sr.Recognizer()
     recognizer.dynamic_energy_threshold = True 
     
-    speak("Jarvis is online. 100 percent working live link established.")
+    speak("Jarvis is online. Live match and batting feed synchronized.")
 
     while True:
         try:
@@ -70,34 +168,31 @@ def jarvis_loop():
 
             print("Recognizing...")
             command = recognizer.recognize_google(audio, language="en-IN").lower().strip()
-            print("You said:", command)
+            print(f"You said: {command}")
 
             if "jarvis" in command:
                 speak("Yes sir")
 
-            # --- THE 100% FIXED SCORE COMMAND ---
-            elif any(word in command for word in ["score", "match kya hua", "kya score hai"]):
-                speak("Fetching live scoreboard...")
-                # Search directly for current score
-                ans = online_search_direct("current match score")
+            # --- SCORE & BATTING COMMAND ---
+            elif any(word in command for word in ["score", "match", "kya hua", "batting"]):
+                speak("Checking current match status...")
+                ans = online_search_direct("score")
                 speak(f"Sir, {ans}")
 
-            # --- EXIT ---
             elif any(word in command for word in ["exit", "stop", "bye"]):
-                speak("Goodbye sir")
+                speak("Goodbye sir, shutting down systems.")
                 os._exit(0)
 
-        except:
+        except Exception:
             pass
 
-# Start the thread
+# Start the Thread
 voice_thread = threading.Thread(target=jarvis_loop)
 voice_thread.daemon = True
 voice_thread.start()
 
 while True:
     time.sleep(1)
-
 
 
 

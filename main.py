@@ -102,39 +102,59 @@ import threading
 import pythoncom
 import win32com.client
 import os
-import re
 import time
-from ddgs import DDGS 
+from ddgs import DDGS
 
 # --- THE UNSTOPPABLE BATTING-FOCUSED SCORE EXTRACTOR ---
-def online_search_direct(query):
+def online_search_direct(intent):
     try:
-        # Hum specifically 'Batting Status' aur 'Live Score' mangwayenge
-        search_query = f"IPL 2026 live score today match scorecard batting team overs"
-        
         with DDGS() as ddgs:
-            # News headlines mein hamesha current team batting ki info hoti hai
-            results = list(ddgs.news(search_query, max_results=6))
-            
-            if results:
-                for r in results:
-                    title = r.get('title', '')
-                    # LOGIC: Check if title contains Score (/), VS, Batting, or Overs
-                    if any(x in title.lower() for x in ["/", "vs", "batting", "overs", "needs", "won by"]):
-                        # Cleaning: Unnecessary sources hatana
-                        clean_ans = title.replace("Cricbuzz", "").replace("IPL 2026:", "").strip()
-                        return clean_ans
+            # --- INTENT 1: Sirf Match ka naam pata karna ---
+            if intent == "match_name":
+                search_query = "IPL 2026 today match teams who is playing"
+                
+                # News mein 'vs' dhundho
+                results = list(ddgs.news(search_query, max_results=5))
+                if results:
+                    for r in results:
+                        title = r.get('title', '')
+                        if " vs " in title.lower() or " vs. " in title.lower():
+                            # Faltu news sources ko hata kar clean title dena
+                            clean_title = title.split('|')[0].replace("IPL 2026:", "").strip()
+                            return f"Sir, aaj ka match hai: {clean_title}"
+                
+                # Agar news mein na mile toh text search karein
+                text_results = list(ddgs.text(search_query, max_results=3))
+                if text_results:
+                    for tr in text_results:
+                        body = tr.get('body', '')
+                        if " vs " in body.lower():
+                            return "Sir, aaj khela jayega: " + " ".join(body.split()[:20])
+                
+                return "Sir, aaj ke match ka naam abhi server par update nahi hua hai."
 
-            # Fallback: Agar news slow ho toh text search check karo
-            text_results = list(ddgs.text(search_query, max_results=3))
-            if text_results:
-                for tr in text_results:
-                    body = tr.get('body', '')
-                    if "/" in body or "batting" in body.lower():
-                        return " ".join(body.split()[:20])
+            # --- INTENT 2: Live Score pata karna ---
+            elif intent == "score":
+                search_query = "IPL 2026 live score today match scorecard batting team overs"
+                
+                results = list(ddgs.news(search_query, max_results=6))
+                if results:
+                    for r in results:
+                        title = r.get('title', '')
+                        if any(x in title.lower() for x in ["/", "batting", "overs", "needs", "won by"]):
+                            clean_ans = title.replace("Cricbuzz", "").replace("IPL 2026:", "").strip()
+                            return clean_ans
 
-            return "Sir, live update is coming in. Please ask again in a moment."
-    except Exception:
+                text_results = list(ddgs.text(search_query, max_results=3))
+                if text_results:
+                    for tr in text_results:
+                        body = tr.get('body', '')
+                        if "/" in body or "batting" in body.lower():
+                            return " ".join(body.split()[:20])
+
+                return "Sir, live update is coming in. Please ask again in a moment."
+
+    except Exception as e:
         return "Sir, I'm unable to reach the live match server right now."
 
 # -------- JARVIS VOICE LOOP --------
@@ -143,12 +163,11 @@ def jarvis_loop():
     speaker = win32com.client.Dispatch("SAPI.SpVoice")
 
     def speak(text):
-        # Format display: Agar score ya batting info hai toh box mein dikhao
         if any(x in text.lower() for x in ["/", "vs", "batting", "overs", "won"]):
             display_text = text.replace("Sir, ", "").strip()
-            print("\n" + "═"*65)
+            print("\n" + "═"*70)
             print(f"🏏  LIVE STATUS: {display_text}")
-            print("═"*65 + "\n")
+            print("═"*70 + "\n")
         else:
             print("Jarvis:", text)
         
@@ -157,7 +176,7 @@ def jarvis_loop():
     recognizer = sr.Recognizer()
     recognizer.dynamic_energy_threshold = True 
     
-    speak("Jarvis is online. Live match and batting feed synchronized.")
+    speak("Jarvis is online. Match tracking systems synchronized.")
 
     while True:
         try:
@@ -173,9 +192,15 @@ def jarvis_loop():
             if "jarvis" in command:
                 speak("Yes sir")
 
-            # --- SCORE & BATTING COMMAND ---
-            elif any(word in command for word in ["score", "match", "kya hua", "batting"]):
-                speak("Checking current match status...")
+            # --- CONDITION 1: Aaj ka match pucha ---
+            elif "aaj ka match" in command or "today match" in command or "kiska match" in command:
+                speak("Checking today's schedule...")
+                ans = online_search_direct("match_name")
+                speak(ans)
+
+            # --- CONDITION 2: Live score pucha ---
+            elif "score" in command or "batting" in command or "kya hua" in command:
+                speak("Checking live score...")
                 ans = online_search_direct("score")
                 speak(f"Sir, {ans}")
 
@@ -184,15 +209,17 @@ def jarvis_loop():
                 os._exit(0)
 
         except Exception:
-            pass
+            pass # Ignore errors like timeouts or unrecognised speech quietly
 
 # Start the Thread
-voice_thread = threading.Thread(target=jarvis_loop)
-voice_thread.daemon = True
-voice_thread.start()
+if __name__ == "__main__":
+    voice_thread = threading.Thread(target=jarvis_loop)
+    voice_thread.daemon = True
+    voice_thread.start()
 
-while True:
-    time.sleep(1)
+    # Main thread ko zinda rakhne ke liye loop
+    while True:
+        time.sleep(1)
 
 
 

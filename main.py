@@ -1,225 +1,130 @@
-# import speech_recognition as sr
-# import threading
-# import pythoncom
-# import win32com.client
-# import os
-# import re
-# import time
-# from ddgs import DDGS 
-
-# # -------- ALAG FILES SE IMPORT --------
-# from engine import fetch_innings_runs, get_player_stats, predict_next_score, compare_players, get_bowling_stats, predict_next_wickets
-# from scraper import get_live_score, get_match_schedule, get_points_table
-# from graphs import show_batting_graph, show_bowling_graph
-
-# # --- THE 100% NO-BLOCK SCORE EXTRACTOR ---
-# def online_search_direct(query):
-#     try:
-#         # Hum query ko bahut specific rakhenge taaki DuckDuckGo seedha answer de
-#         search_query = f"IPL 2026 {query} live score teams runs overs"
-        
-#         with DDGS() as ddgs:
-#             # Hum 8 results scan karenge taaki "Protected" data ko skip karke Asli Score dhoondein
-#             results = list(ddgs.text(search_query, max_results=8))
-            
-#             if results:
-#                 for r in results:
-#                     body = r.get('body', '').lower()
-#                     title = r.get('title', '').lower()
-#                     combined = title + " " + body
-                    
-#                     # LOGIC: Check if it contains both a Score (/) and Team Names/VS
-#                     if ("/" in combined or "overs" in combined) and ("vs" in combined or "beat" in combined or "won" in combined):
-                        
-#                         # CLEANING: Faltu ki website descriptions hatana
-#                         garbage = ["view all", "cricbuzz", "ball-by-ball", "full coverage", "stay updated", "summary", "1 hour ago", "minutes ago", "subscription"]
-#                         for word in garbage:
-#                             combined = re.sub(word, '', combined, flags=re.IGNORECASE)
-                        
-#                         # Clean links
-#                         clean_ans = re.sub(r'http\S+', '', combined)
-                        
-#                         # Sirf pehle 22 words (Short & Clear Answer)
-#                         final_msg = " ".join(clean_ans.split()[:22])
-#                         return final_msg.strip()
-
-#             return "Sir, match is live but scoreboard is currently hidden by the server. Trying again..."
-#     except Exception as e:
-#         return "Sir, connection link broken. Please check if firewall is blocking Jarvis."
-
-# # -------- JARVIS VOICE LOOP --------
-# def jarvis_loop():
-#     pythoncom.CoInitialize()
-#     speaker = win32com.client.Dispatch("SAPI.SpVoice")
-
-#     def speak(text):
-#         print("Jarvis:", text)
-#         speaker.Speak(text)
-
-#     recognizer = sr.Recognizer()
-#     recognizer.dynamic_energy_threshold = True 
-    
-#     speak("Jarvis is online. 100 percent working live link established.")
-
-#     while True:
-#         try:
-#             with sr.Microphone() as source:
-#                 print("Listening...")
-#                 recognizer.adjust_for_ambient_noise(source, duration=0.5)
-#                 audio = recognizer.listen(source, timeout=10, phrase_time_limit=8)
-
-#             print("Recognizing...")
-#             command = recognizer.recognize_google(audio, language="en-IN").lower().strip()
-#             print("You said:", command)
-
-#             if "jarvis" in command:
-#                 speak("Yes sir")
-
-#             # --- THE 100% FIXED SCORE COMMAND ---
-#             elif any(word in command for word in ["score", "match kya hua", "kya score hai"]):
-#                 speak("Fetching live scoreboard...")
-#                 # Search directly for current score
-#                 ans = online_search_direct("current match score")
-#                 speak(f"Sir, {ans}")
-
-#             # --- EXIT ---
-#             elif any(word in command for word in ["exit", "stop", "bye"]):
-#                 speak("Goodbye sir")
-#                 os._exit(0)
-
-#         except:
-#             pass
-
-# # Start the thread
-# voice_thread = threading.Thread(target=jarvis_loop)
-# voice_thread.daemon = True
-# voice_thread.start()
-
-# while True:
-#     time.sleep(1)
-import speech_recognition as sr
+import re
+import time
+import os
 import threading
 import pythoncom
 import win32com.client
-import os
-import time
+import speech_recognition as sr
 from ddgs import DDGS
 
-# --- THE UNSTOPPABLE BATTING-FOCUSED SCORE EXTRACTOR ---
-def online_search_direct(intent):
+# --- GLOBAL STATE FOR SENTINEL MODE ---
+last_score_state = {"wickets": 0, "runs": 0, "match_name": ""}
+tracking_active = True
+
+# ══════════════════════════════════════════════════════════
+#  CORE ENGINE: LIVE DATA FETCH & ANALYTICS
+# ══════════════════════════════════════════════════════════
+def get_live_data():
     try:
         with DDGS() as ddgs:
-            # --- INTENT 1: Sirf Match ka naam pata karna ---
-            if intent == "match_name":
-                search_query = "IPL 2026 today match teams who is playing"
-                
-                # News mein 'vs' dhundho
-                results = list(ddgs.news(search_query, max_results=5))
-                if results:
-                    for r in results:
-                        title = r.get('title', '')
-                        if " vs " in title.lower() or " vs. " in title.lower():
-                            # Faltu news sources ko hata kar clean title dena
-                            clean_title = title.split('|')[0].replace("IPL 2026:", "").strip()
-                            return f"Sir, aaj ka match hai: {clean_title}"
-                
-                # Agar news mein na mile toh text search karein
-                text_results = list(ddgs.text(search_query, max_results=3))
-                if text_results:
-                    for tr in text_results:
-                        body = tr.get('body', '')
-                        if " vs " in body.lower():
-                            return "Sir, aaj khela jayega: " + " ".join(body.split()[:20])
-                
-                return "Sir, aaj ke match ka naam abhi server par update nahi hua hai."
+            # Sirf 24 ghante ka data aur India region focus
+            q = "IPL 2026 live score today match scorecard"
+            results = list(ddgs.news(q, region="in-en", timelimit="d", max_results=5))
+            
+            for r in results:
+                text = r.get('title', '') + " " + r.get('body', '')
+                # Score pattern search: e.g. "145/3 (16.4)"
+                match = re.search(r'(\d{1,3})/(\d{1,2})', text)
+                if match:
+                    runs = int(match.group(1))
+                    wickets = int(match.group(2))
+                    return {"runs": runs, "wickets": wickets, "raw": text[:100]}
+    except:
+        pass
+    return None
 
-            # --- INTENT 2: Live Score pata karna ---
-            elif intent == "score":
-                search_query = "IPL 2026 live score today match scorecard batting team overs"
-                
-                results = list(ddgs.news(search_query, max_results=6))
-                if results:
-                    for r in results:
-                        title = r.get('title', '')
-                        if any(x in title.lower() for x in ["/", "batting", "overs", "needs", "won by"]):
-                            clean_ans = title.replace("Cricbuzz", "").replace("IPL 2026:", "").strip()
-                            return clean_ans
+def predict_win(runs, wickets, target=200): # Target default 200 agar na mile
+    chance = 100 - (wickets * 10) - ((target - runs) / 2)
+    return max(5, min(95, round(chance)))
 
-                text_results = list(ddgs.text(search_query, max_results=3))
-                if text_results:
-                    for tr in text_results:
-                        body = tr.get('body', '')
-                        if "/" in body or "batting" in body.lower():
-                            return " ".join(body.split()[:20])
+# ══════════════════════════════════════════════════════════
+#  SENTINEL THREAD: BACKGROUND MONITORING
+# ══════════════════════════════════════════════════════════
+def sentinel_monitor(speaker):
+    global last_score_state
+    pythoncom.CoInitialize()
+    
+    while tracking_active:
+        data = get_live_data()
+        if data:
+            # Check for Wicket
+            if data['wickets'] > last_score_state['wickets']:
+                msg = f"Sir, alert! A wicket has fallen. Current score is {data['runs']} for {data['wickets']}."
+                print(f"\n🚨 ALERT: {msg}")
+                speaker.Speak(msg)
+            
+            # Check for Milestone (Every 50 runs)
+            if data['runs'] // 50 > last_score_state['runs'] // 50:
+                msg = f"Sir, the batting team has crossed { (data['runs'] // 50) * 50 } runs."
+                speaker.Speak(msg)
 
-                return "Sir, live update is coming in. Please ask again in a moment."
+            last_score_state['runs'] = data['runs']
+            last_score_state['wickets'] = data['wickets']
+            
+        time.sleep(60) # Har 1 minute mein check karega
 
-    except Exception as e:
-        return "Sir, I'm unable to reach the live match server right now."
-
-# -------- JARVIS VOICE LOOP --------
-def jarvis_loop():
+# ══════════════════════════════════════════════════════════
+#  MAIN JARVIS INTERFACE
+# ══════════════════════════════════════════════════════════
+def jarvis_main():
     pythoncom.CoInitialize()
     speaker = win32com.client.Dispatch("SAPI.SpVoice")
-
+    
     def speak(text):
-        if any(x in text.lower() for x in ["/", "vs", "batting", "overs", "won"]):
-            display_text = text.replace("Sir, ", "").strip()
-            print("\n" + "═"*70)
-            print(f"🏏  LIVE STATUS: {display_text}")
-            print("═"*70 + "\n")
-        else:
-            print("Jarvis:", text)
-        
+        print(f"Jarvis: {text}")
         speaker.Speak(text)
 
-    recognizer = sr.Recognizer()
-    recognizer.dynamic_energy_threshold = True 
-    
-    speak("Jarvis is online. Match tracking systems synchronized.")
+    # Start Sentinel in Background
+    monitor_thread = threading.Thread(target=sentinel_monitor, args=(speaker,))
+    monitor_thread.daemon = True
+    monitor_thread.start()
+
+    rec = sr.Recognizer()
+    speak("Jarvis is online. Sentinel monitoring and win-prediction systems are active.")
 
     while True:
         try:
             with sr.Microphone() as source:
-                print("Listening...")
-                recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                audio = recognizer.listen(source, timeout=10, phrase_time_limit=8)
+                print("\n🎤 Listening...")
+                rec.adjust_for_ambient_noise(source, duration=0.5)
+                audio = rec.listen(source, timeout=10)
 
-            print("Recognizing...")
-            command = recognizer.recognize_google(audio, language="en-IN").lower().strip()
-            print(f"You said: {command}")
+            command = rec.recognize_google(audio, language="en-IN").lower()
+            print(f"User: {command}")
 
-            if "jarvis" in command:
-                speak("Yes sir")
+            # 1. LIVE SCORE COMMAND
+            if any(w in command for w in ["score", "kya hua", "status"]):
+                speak("Accessing live feed...")
+                data = get_live_data()
+                if data:
+                    speak(f"Sir, current score is {data['runs']} runs for {data['wickets']} wickets.")
+                else:
+                    speak("Sir, live data is currently being refreshed.")
 
-            # --- CONDITION 1: Aaj ka match pucha ---
-            elif "aaj ka match" in command or "today match" in command or "kiska match" in command:
-                speak("Checking today's schedule...")
-                ans = online_search_direct("match_name")
-                speak(ans)
+            # 2. PREDICTION COMMAND
+            elif any(w in command for w in ["predict", "kaun jeetega", "prediction", "jeetne ke chance"]):
+                data = get_live_data()
+                if data:
+                    prob = predict_win(data['runs'], data['wickets'])
+                    speak(f"Sir, analyzing match dynamics. The batting team has a {prob} percent chance of winning.")
+                else:
+                    speak("Not enough data for a stable prediction yet, sir.")
 
-            # --- CONDITION 2: Live score pucha ---
-            elif "score" in command or "batting" in command or "kya hua" in command:
-                speak("Checking live score...")
-                ans = online_search_direct("score")
-                speak(f"Sir, {ans}")
+            # 3. GUJARATI/HINDI MIXED COMMANDS
+            elif "kem che" in command:
+                speak("Maja ma chu sir! Match update ready che.")
 
-            elif any(word in command for word in ["exit", "stop", "bye"]):
-                speak("Goodbye sir, shutting down systems.")
+            elif "exit" in command or "bye" in command:
+                speak("Shutting down IPL systems. Goodbye sir.")
                 os._exit(0)
 
         except Exception:
-            pass # Ignore errors like timeouts or unrecognised speech quietly
+            pass
 
-# Start the Thread
 if __name__ == "__main__":
-    voice_thread = threading.Thread(target=jarvis_loop)
-    voice_thread.daemon = True
-    voice_thread.start()
+    jarvis_main()
 
-    # Main thread ko zinda rakhne ke liye loop
-    while True:
-        time.sleep(1)
+
 
 
 

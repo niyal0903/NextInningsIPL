@@ -1,6 +1,14 @@
-.vscode/
+# Ignore unnecessary files
 __pycache__/
-graphs/
 *.pyc
+*.log
 tempCodeRunnerFile.py
-hii.py
+.vscode/
+venv/
+
+# Ignore heavy data
+data/
+
+# Ignore personal logs
+intruder_logs
+intruder_logs.txt

@@ -746,25 +746,26 @@
 #         time.sleep(1)
 
 
-
 """
 ╔══════════════════════════════════════════════════════════════════════╗
-║          JARVIS - IPL INTELLIGENCE AGENT v7.0 PRO                   ║
+║          JARVIS - IPL INTELLIGENCE AGENT v8.0 PRO MAX               ║
 ║                                                                      ║
-║  FIXED:  DecodeError retry | Clean parsing | Junk filter            ║
-║  NEW:    Auto commentary | Orange/Purple cap | Auction value        ║
-║          Team strength meter | Ball by ball simulation              ║
-║          Smart cache | Multi-query fallback | Rich console UI       ║
+║  FIXED:  Momentum graph crash | Orange cap junk | Overs=0 bug       ║
+║          Points table | Squad analysis clean | Graph thread fix     ║
+║  NEW:    Best XI suggester | Venue stats | Form guide               ║
+║          Auto news ticker | Smart speak filter | Rich display       ║
 ╚══════════════════════════════════════════════════════════════════════╝
 INSTALL:
     pip install duckduckgo-search speechrecognition pywin32 pyaudio matplotlib numpy scikit-learn
 RUN:
     python jarvis_cricket_agent.py
 """
-import re, time, os, threading, datetime, random
+import re, time, os, threading, datetime, queue
 import pythoncom, win32com.client
 import speech_recognition as sr
 from ddgs import DDGS
+import matplotlib
+matplotlib.use('TkAgg')   # Fix: main thread GUI
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
@@ -776,8 +777,9 @@ import numpy as np
 last_score_state = {"wickets":-1,"runs":0,"overs":0.0,"rr":0.0,"partnership":0}
 tracking_active  = True
 PLAYER_CACHE     = {}
-SEARCH_CACHE     = {}   # query -> (result, timestamp)
-CACHE_TTL        = 120  # seconds
+SEARCH_CACHE     = {}
+CACHE_TTL        = 120
+GRAPH_QUEUE      = queue.Queue()   # Fix: graphs via main thread queue
 
 MATCH_STATE = {
     "team1":"","team2":"","runs":0,"wickets":0,"overs":0.0,
@@ -785,22 +787,22 @@ MATCH_STATE = {
     "last_updated":None,"venue":"","city":"",
 }
 
-JUNK = ["cricbuzz","cricinfo","espncricinfo","ndtv","hindustantimes",
-        "timesofindia","view the","click here","read more","subscribe",
-        "sign up","download","ipl 2026 schedule","ipl points table",
-        "complete schedule","all matches","fixtures"]
+JUNK_WORDS = [
+    "cricbuzz","cricinfo","espncricinfo","ndtv","hindustantimes",
+    "timesofindia","view the","click here","read more","subscribe",
+    "sign up","download","ipl 2026 schedule","complete schedule",
+    "all matches","fixtures","ipl points table 2026",
+]
 
 # ══════════════════════════════════════════════════════════════════════
-#  SEARCH ENGINE — retry + cache + junk filter
+#  SEARCH — retry + cache
 # ══════════════════════════════════════════════════════════════════════
 def search(query, mode="news", days="w", n=8, retries=3):
-    # Cache check
     key = f"{query}|{mode}|{days}"
     if key in SEARCH_CACHE:
         res, ts = SEARCH_CACHE[key]
         if time.time() - ts < CACHE_TTL:
             return res
-
     for attempt in range(retries):
         try:
             with DDGS() as d:
@@ -816,8 +818,9 @@ def search(query, mode="news", days="w", n=8, retries=3):
         except Exception as e:
             err = str(e)
             if "DecodeError" in err or "Body collection" in err:
-                print(f"[Retry {attempt+1}/{retries}] DecodeError - waiting...")
-                time.sleep(2 * (attempt + 1))  # exponential backoff
+                wait = 2 * (attempt + 1)
+                print(f"[Retry {attempt+1}/{retries}] waiting {wait}s...")
+                time.sleep(wait)
             else:
                 print(f"[Search Err] {err}")
                 break
@@ -826,61 +829,45 @@ def search(query, mode="news", days="w", n=8, retries=3):
 def all_text(res):
     return " ".join(r.get("title","")+" "+r.get("body","") for r in res)
 
-def clean_line(line):
-    """Remove junk sources and clean whitespace"""
-    line = re.sub(r'(Cricbuzz|Cricinfo|ESPNcricinfo|NDTV|Hindustan Times|Times of India'
-                  r'|IPL 2026 Schedule|View the|Click here|Read more)', '', line, flags=re.IGNORECASE)
-    line = re.sub(r'\s+', ' ', line).strip()
-    return line
+def is_junk(line):
+    line_l = line.lower()
+    if any(jw in line_l for jw in JUNK_WORDS): return True
+    # CamelCase glued words (bad scraping artifact)
+    caps = len(re.findall(r'[A-Z]', line))
+    if caps > 12 and len(line) < 100: return True
+    return False
 
-def best_line(results, keywords, min_len=20):
-    """Extract cleanest matching line from results"""
+def clean(text):
+    text = re.sub(r'(Cricbuzz|Cricinfo|ESPNcricinfo|NDTV|Hindustan\s*Times|Times\s*of\s*India'
+                  r'|IPL\s*2026\s*Schedule|View\s*the|Click\s*here|Read\s*more)',
+                  '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+def best_line(results, keywords, min_len=20, max_len=220):
     for r in results:
-        body = r.get("body","")
-        for line in re.split(r'[.\n|]', body):
-            line = line.strip()
-            if len(line) < min_len: continue
-            if any(jw in line.lower() for jw in JUNK): continue
-            for kw in keywords:
-                if kw.lower() in line.lower():
-                    return clean_line(line)[:200]
+        for src in [r.get("body",""), r.get("title","")]:
+            for line in re.split(r'[.\n|]', src):
+                line = line.strip()
+                if not (min_len < len(line) < max_len): continue
+                if is_junk(line): continue
+                for kw in keywords:
+                    if kw.lower() in line.lower():
+                        return clean(line)
     return None
 
-def console_banner(text, icon="🏏"):
-    """Rich console display"""
+def console_box(text, icon="🏏"):
     print("\n" + "═"*70)
     print(f"{icon}  {text}")
     print("═"*70 + "\n")
 
 # ══════════════════════════════════════════════════════════════════════
-#  FEATURE 1: TODAY'S MATCH
-# ══════════════════════════════════════════════════════════════════════
-def get_today_match():
-    queries = [
-        "IPL 2026 today match playing teams",
-        "IPL 2026 live match today",
-    ]
-    for q in queries:
-        res = search(q, mode="news", days="d")
-        for r in res:
-            t = r.get("title","")
-            m = re.search(
-                r'([\w\s]+(?:Knight Riders|Super Kings|Indians|Capitals|Kings|Royals|Hyderabad|Titans|Giants|Bengaluru|Bangalore))'
-                r'\s+vs?\s+'
-                r'([\w\s]+(?:Knight Riders|Super Kings|Indians|Capitals|Kings|Royals|Hyderabad|Titans|Giants|Bengaluru|Bangalore))',
-                t, re.IGNORECASE)
-            if m: return f"{m.group(1).strip()} vs {m.group(2).strip()}"
-            m2 = re.search(r'\b([A-Z]{2,3})\s+vs\s+([A-Z]{2,3})\b', t)
-            if m2: return f"{m2.group(1)} vs {m2.group(2)}"
-    return None
-
-# ══════════════════════════════════════════════════════════════════════
-#  FEATURE 2: FULL LIVE SCORECARD
+#  LIVE SCORECARD
 # ══════════════════════════════════════════════════════════════════════
 def get_full_scorecard():
     queries = [
-        "IPL 2026 live score today match batting",
-        "IPL live scorecard today innings wickets overs",
+        "IPL 2026 live score today match batting overs wickets",
+        "IPL live scorecard today innings",
     ]
     for q in queries:
         res = search(q, mode="news", days="d", n=10)
@@ -893,13 +880,19 @@ def get_full_scorecard():
             data["runs"]    = int(m.group(1))
             data["wickets"] = int(m.group(2))
 
-        om = re.search(r'(\d{1,2}\.\d)\s*(?:ov|overs?)', txt, re.IGNORECASE)
-        if om: data["overs"] = float(om.group(1))
+        # Overs — multiple patterns
+        for pat in [r'(\d{1,2}\.\d)\s*(?:ov|overs?)', r'after\s+(\d{1,2}\.\d)\s*overs?',
+                    r'in\s+(\d{1,2})\s*overs?']:
+            om = re.search(pat, txt, re.IGNORECASE)
+            if om:
+                try: data["overs"] = float(om.group(1)); break
+                except: pass
+
+        if data.get("runs") and data.get("overs", 0) > 0:
+            data["run_rate"] = round(data["runs"] / data["overs"], 2)
 
         rrm = re.search(r'(?:run\s*rate|RR)[:\s]+(\d{1,2}\.\d{1,2})', txt, re.IGNORECASE)
         if rrm: data["run_rate"] = float(rrm.group(1))
-        elif data.get("runs") and data.get("overs",0) > 0:
-            data["run_rate"] = round(data["runs"] / data["overs"], 2)
 
         rrr = re.search(r'(?:required|need)[^\d]*(\d{1,2}\.\d{1,2})', txt, re.IGNORECASE)
         if rrr: data["req_rate"] = float(rrr.group(1))
@@ -916,306 +909,326 @@ def get_full_scorecard():
         balls = re.search(r'(\d{1,3})\s+balls?\s+(?:remaining|left)', txt, re.IGNORECASE)
         if balls: data["balls_left"] = int(balls.group(1))
 
+        # Team names
+        tm = re.search(
+            r'([\w\s]+(?:Knight Riders|Super Kings|Indians|Capitals|Kings|Royals|Hyderabad|Titans|Giants|Bengaluru|Bangalore))'
+            r'\s+vs?\s+'
+            r'([\w\s]+(?:Knight Riders|Super Kings|Indians|Capitals|Kings|Royals|Hyderabad|Titans|Giants|Bengaluru|Bangalore))',
+            txt, re.IGNORECASE)
+        if tm:
+            data["team1"] = tm.group(1).strip()
+            data["team2"] = tm.group(2).strip()
+            MATCH_STATE["team1"] = data["team1"]
+            MATCH_STATE["team2"] = data["team2"]
+
         if data.get("runs"):
             MATCH_STATE.update({k:v for k,v in data.items() if v})
             MATCH_STATE["last_updated"] = datetime.datetime.now()
-            if data.get("run_rate"):
-                MATCH_STATE["rr_history"].append(data["run_rate"])
-            MATCH_STATE["run_history"].append(data.get("runs",0))
+            rh = MATCH_STATE["run_history"]
+            if not rh or rh[-1] != data["runs"]:
+                rh.append(data["runs"])
+                if data.get("run_rate"):
+                    MATCH_STATE["rr_history"].append(data["run_rate"])
             return data
     return None
 
+def get_today_match():
+    queries = ["IPL 2026 today match playing teams live","IPL 2026 live match today"]
+    for q in queries:
+        res = search(q, mode="news", days="d")
+        for r in res:
+            t = r.get("title","")
+            m = re.search(
+                r'([\w\s]+(?:Knight Riders|Super Kings|Indians|Capitals|Kings|Royals|Hyderabad|Titans|Giants|Bengaluru|Bangalore))'
+                r'\s+vs?\s+'
+                r'([\w\s]+(?:Knight Riders|Super Kings|Indians|Capitals|Kings|Royals|Hyderabad|Titans|Giants|Bengaluru|Bangalore))',
+                t, re.IGNORECASE)
+            if m: return f"{m.group(1).strip()} vs {m.group(2).strip()}"
+            m2 = re.search(r'\b([A-Z]{2,3})\s+vs\s+([A-Z]{2,3})\b', t)
+            if m2: return f"{m2.group(1)} vs {m2.group(2)}"
+    return None
+
 # ══════════════════════════════════════════════════════════════════════
-#  FEATURE 3: SCHEDULE (fixed - clean output)
+#  SCHEDULE
 # ══════════════════════════════════════════════════════════════════════
 def get_match_schedule(day="today"):
-    queries = {
-        "today":     ["IPL 2026 today match fixture teams playing", "IPL 2026 today game"],
-        "tomorrow":  ["IPL 2026 tomorrow match next fixture", "IPL 2026 next match date"],
-        "yesterday": ["IPL 2026 yesterday match result winner", "IPL 2026 last match result"],
+    day_queries = {
+        "today":     ["IPL 2026 today match teams playing","IPL 2026 today fixture"],
+        "tomorrow":  ["IPL 2026 tomorrow next match fixture","IPL 2026 next match date venue"],
+        "yesterday": ["IPL 2026 yesterday match result winner score","IPL 2026 last match result"],
     }
-    for q in queries.get(day, queries["today"]):
+    for q in day_queries.get(day, day_queries["today"]):
         res = search(q, mode="news", days="w")
         for r in res:
-            # Body se vs wali clean line
-            body = r.get("body","")
+            body  = r.get("body","")
+            title = r.get("title","")
             for line in re.split(r'[.\n|]', body):
                 line = line.strip()
-                if " vs " in line.lower() and 10 < len(line) < 200:
-                    if not any(jw in line.lower() for jw in JUNK):
-                        return clean_line(line)
-            # Title se
-            title = r.get("title","")
+                if " vs " in line.lower() and 10 < len(line) < 200 and not is_junk(line):
+                    return clean(line)
             if " vs " in title.lower():
                 part = title.split("|")[0].split(",")[0]
-                cleaned = clean_line(part)
-                if len(cleaned) > 8:
-                    return cleaned
-    return f"Sir, {day} ka match schedule server pe update nahi hua abhi."
+                c = clean(part)
+                if len(c) > 8 and not is_junk(c): return c
+    return f"Sir, {day} ka schedule abhi update nahi hua."
 
 # ══════════════════════════════════════════════════════════════════════
-#  FEATURE 4: POINTS TABLE (fixed - no junk titles)
+#  POINTS TABLE — FIXED
 # ══════════════════════════════════════════════════════════════════════
 def get_points_table():
-    res = search("IPL 2026 points table standings teams wins losses", mode="text", n=8)
+    # Multiple queries for better hit rate
+    queries = [
+        "IPL 2026 points table team wins losses",
+        "IPL 2026 standings which team is leading",
+        "IPL 2026 table top four teams",
+    ]
     found = []
-    for r in res:
-        body = r.get("body","")
-        for line in re.split(r'[\n.]', body):
-            line = line.strip()
-            if any(t in line for t in ["Indians","Kings","Royals","Capitals","Hyderabad","Titans","Giants","Bengaluru","Riders"]):
-                if any(jw in line.lower() for jw in JUNK): continue
-                pts = re.search(r'(\d{1,2})\s*(?:pts?|points?|wins?)', line, re.IGNORECASE)
-                if pts and 5 < len(line) < 100:
-                    found.append(clean_line(line))
+    for q in queries:
+        res = search(q, mode="text", n=8)
+        for r in res:
+            body = r.get("body","")
+            for line in re.split(r'[\n.]', body):
+                line = line.strip()
+                if is_junk(line) or len(line) < 8: continue
+                has_team = any(t in line for t in ["Indians","Kings","Royals","Capitals",
+                               "Hyderabad","Titans","Giants","Bengaluru","Riders","Super Kings"])
+                has_pts  = bool(re.search(r'\d', line))
+                if has_team and has_pts:
+                    cl = clean(line)
+                    if cl not in found: found.append(cl)
             if len(found) >= 5: break
-        if len(found) >= 5: break
-    if found:
-        return "Sir, IPL 2026 points table: " + ". ".join(found[:5])
+        if len(found) >= 3: break
 
-    # Fallback: get top teams mentioned
-    txt = all_text(res)
-    leaders = re.findall(r'(\w+\s+(?:Indians|Kings|Royals|Capitals|Hyderabad|Titans|Giants|Bengaluru|Riders))\s+(?:lead|top|are at)', txt, re.IGNORECASE)
-    if leaders:
-        return f"Sir, currently leading: {', '.join(leaders[:3])}"
-    return "Sir, points table data is being updated. Please try again in a moment."
+    if found:
+        return "Sir, IPL 2026 standings: " + ". ".join(found[:5])
+
+    # Fallback: who is leading
+    res = search("IPL 2026 which team is on top leading table", mode="news", days="w", n=5)
+    line = best_line(res, ["lead","top","first","ahead","table"])
+    return f"Sir, {line}" if line else "Sir, points table updating. Please try in a moment."
 
 # ══════════════════════════════════════════════════════════════════════
-#  FEATURE 5: PITCH REPORT (fixed - clean output)
+#  ORANGE CAP — FIXED (no camelCase junk)
+# ══════════════════════════════════════════════════════════════════════
+def get_orange_cap():
+    queries = [
+        "IPL 2026 orange cap leading run scorer most runs",
+        "IPL 2026 top batsman run list orange cap holder",
+    ]
+    for q in queries:
+        res = search(q, mode="text", n=6)
+        txt = all_text(res)
+        # Pattern: "Virat Kohli 450 runs" or "Kohli leads with 450"
+        m = re.search(r'([\w\s]{5,25}?)\s+(?:leads?|tops?|scored|with)\s+(\d{3,4})\s+runs?', txt, re.IGNORECASE)
+        if m:
+            name = clean(m.group(1)).strip()
+            if not is_junk(name) and len(name) > 3:
+                return f"Sir, orange cap leader: {name} with {m.group(2)} runs."
+
+        # Best clean sentence
+        for r in res:
+            body = r.get("body","")
+            for line in re.split(r'[.\n]', body):
+                line = line.strip()
+                if is_junk(line) or len(line) < 15: continue
+                if any(w in line.lower() for w in ["orange cap","most runs","top scorer","run scorer"]):
+                    # Reject if too many numbers (table row) or camelCase
+                    if len(re.findall(r'\d', line)) < 6:
+                        return f"Sir, {clean(line)[:180]}"
+    return "Sir, orange cap data not available right now."
+
+# ══════════════════════════════════════════════════════════════════════
+#  PURPLE CAP — FIXED
+# ══════════════════════════════════════════════════════════════════════
+def get_purple_cap():
+    queries = [
+        "IPL 2026 purple cap leading wicket taker most wickets",
+        "IPL 2026 top bowler wicket list purple cap holder",
+    ]
+    for q in queries:
+        res = search(q, mode="text", n=6)
+        txt = all_text(res)
+        m = re.search(r'([\w\s]{5,25}?)\s+(?:leads?|tops?|taken?|with)\s+(\d{1,2})\s+wickets?', txt, re.IGNORECASE)
+        if m:
+            name = clean(m.group(1)).strip()
+            if not is_junk(name) and len(name) > 3:
+                return f"Sir, purple cap leader: {name} with {m.group(2)} wickets."
+        for r in res:
+            body = r.get("body","")
+            for line in re.split(r'[.\n]', body):
+                line = line.strip()
+                if is_junk(line) or len(line) < 15: continue
+                if any(w in line.lower() for w in ["purple cap","most wickets","top bowler","wicket taker"]):
+                    if len(re.findall(r'\d', line)) < 6:
+                        return f"Sir, {clean(line)[:180]}"
+    return "Sir, purple cap data not available right now."
+
+# ══════════════════════════════════════════════════════════════════════
+#  PITCH REPORT — FIXED
 # ══════════════════════════════════════════════════════════════════════
 def get_pitch_report():
     match = get_today_match() or "IPL 2026"
-    res = search(f"{match} IPL 2026 pitch report venue surface", mode="news", days="d", n=6)
-
-    # Venue nikalo
+    res = search(f"{match} IPL 2026 pitch report venue", mode="news", days="d", n=6)
     txt = all_text(res)
     venue_m = re.search(r'(?:at|in|venue[:\s]+)([\w\s]+(?:Stadium|Ground|Oval|Park|Arena))', txt, re.IGNORECASE)
     venue = venue_m.group(1).strip() if venue_m else "today's ground"
-
-    # Clean pitch lines
     parts = []
     for r in res:
         body = r.get("body","")
         for line in re.split(r'[.\n]', body):
             line = line.strip()
-            if len(line) < 20: continue
-            if any(jw in line.lower() for jw in JUNK): continue
-            if any(w in line.lower() for w in ["pitch","surface","spin","pace","bounce","batting","assist","seam"]):
-                # Remove concatenated words (CamelCase glued words from bad scraping)
-                if len(re.findall(r'[A-Z]', line)) > 8: continue  # too many caps = junk
-                parts.append(clean_line(line)[:150])
+            if is_junk(line) or len(line) < 20: continue
+            if any(w in line.lower() for w in ["pitch","surface","spin","pace","bounce","batting","assist","seam","dew"]):
+                parts.append(clean(line)[:150])
                 if len(parts) >= 2: break
         if len(parts) >= 2: break
-
     if parts:
         return f"Sir, pitch report for {venue}: " + ". ".join(parts)
-    return f"Sir, {venue} pitch report: Good batting surface. Spinners may get assistance in the second half. Average score around 170-185."
+    # Smart fallback based on venue
+    VENUE_INFO = {
+        "wankhede": "High-scoring venue. Fast outfield. Good for batting. Dew affects second innings.",
+        "eden gardens": "Spin-friendly. Slower track. Average score around 165.",
+        "chinnaswamy": "Batsman's paradise. Thin air. High scores common. Average 180 plus.",
+        "chepauk": "Spin-friendly. Low bounce. Slower pitch. Batsmen need to settle.",
+        "narendra modi": "Flat pitch. Good for batting. Large ground. Average 175.",
+        "arun jaitley": "Good batting surface. Some help for pace early on.",
+    }
+    for k, v in VENUE_INFO.items():
+        if k in venue.lower():
+            return f"Sir, {venue} pitch: {v}"
+    return f"Sir, {venue}: Expected to be a good batting surface. Spinners may assist in later overs."
 
 # ══════════════════════════════════════════════════════════════════════
-#  FEATURE 6: WEATHER (fixed)
+#  WEATHER — FIXED
 # ══════════════════════════════════════════════════════════════════════
 def get_weather_report():
     match = get_today_match() or "IPL 2026"
     cities = ["Mumbai","Chennai","Kolkata","Delhi","Bangalore","Bengaluru",
               "Hyderabad","Ahmedabad","Jaipur","Lucknow","Mohali","Pune","Dharamsala"]
-
-    res_venue = search(f"{match} IPL 2026 venue city weather", mode="news", days="d", n=6)
-    venue_txt = all_text(res_venue)
-
+    res_v = search(f"{match} IPL 2026 venue city", mode="news", days="d", n=5)
+    vtxt = all_text(res_v)
     city = "Mumbai"
     for c in cities:
-        if c.lower() in venue_txt.lower(): city = c; break
-
+        if c.lower() in vtxt.lower(): city = c; break
     MATCH_STATE["city"] = city
-    res = search(f"{city} weather today cricket humidity rain dew factor", mode="news", days="d", n=6)
 
-    parts = []
+    res = search(f"{city} weather today cricket match", mode="news", days="d", n=6)
     for r in res:
         body = r.get("body","")
-        title = r.get("title","")
-        for line in re.split(r'[.\n]', body + " " + title):
+        for line in re.split(r'[.\n]', body):
             line = line.strip()
-            if len(line) < 15: continue
-            if any(jw in line.lower() for jw in JUNK): continue
-            if any(w in line.lower() for w in ["weather","rain","temperature","humid","clear","cloud","dew","forecast"]):
-                if len(re.findall(r'[A-Z]', line)) > 10: continue
-                parts.append(clean_line(line)[:150])
-                if len(parts) >= 2: break
-        if len(parts) >= 2: break
-
-    if parts:
-        return f"Sir, {city} weather conditions: " + ". ".join(parts)
-    return f"Sir, {city} weather: Clear skies expected. Dew factor may come into play in the second innings. Humidity around 65 percent."
+            if is_junk(line) or len(line) < 15: continue
+            if any(w in line.lower() for w in ["weather","rain","temperature","humid","clear","cloud","dew"]):
+                return f"Sir, {city} weather: {clean(line)[:150]}"
+    return f"Sir, {city}: Clear conditions expected. Dew factor likely in second innings. Humidity around 65 percent."
 
 # ══════════════════════════════════════════════════════════════════════
-#  FEATURE 7: INJURY NEWS (fixed)
+#  SQUAD ANALYSIS — FIXED (clean output)
+# ══════════════════════════════════════════════════════════════════════
+def get_team_strength(team):
+    res = search(f"{team} IPL 2026 squad analysis strengths weaknesses", mode="text", n=6)
+    parts = []
+    t0 = team.split()[0].lower()
+    for r in res:
+        body = r.get("body","")
+        for line in re.split(r'[.\n]', body):
+            line = line.strip()
+            if is_junk(line) or len(line) < 20: continue
+            if t0 in line.lower():
+                if any(w in line.lower() for w in ["strong","weak","key","squad","batting","bowling","form","win","balance"]):
+                    cl = clean(line)[:150]
+                    if cl not in parts: parts.append(cl)
+            if len(parts) >= 3: break
+        if len(parts) >= 3: break
+    if parts:
+        return "Sir, " + team + " analysis: " + ". ".join(parts[:3])
+    return f"Sir, {team}: Balanced squad with strong batting depth and experienced bowlers."
+
+# ══════════════════════════════════════════════════════════════════════
+#  COMMENTARY — IMPROVED
+# ══════════════════════════════════════════════════════════════════════
+def get_live_commentary():
+    queries = [
+        "IPL 2026 live commentary today six four wicket boundary",
+        "IPL 2026 today match ball by ball latest update",
+    ]
+    for q in queries:
+        res = search(q, mode="news", days="d", n=8)
+        commentary = []
+        for r in res:
+            body = r.get("body","")
+            for line in re.split(r'[.\n]', body):
+                line = line.strip()
+                if is_junk(line) or len(line) < 20: continue
+                if any(w in line.lower() for w in ["four","six","wicket","boundary","dot","single",
+                                                    "caught","bowled","lbw","pulled","driven","edged",
+                                                    "smashed","hit","over"]):
+                    commentary.append(clean(line)[:150])
+                    if len(commentary) >= 3: break
+            if len(commentary) >= 3: break
+        if commentary:
+            return "Sir, latest from the ground: " + ". ".join(commentary)
+    d = get_full_scorecard()
+    if d:
+        msg = f"Sir, {d.get('runs','?')} for {d.get('wickets','?')} in {d.get('overs','?')} overs"
+        if d.get("run_rate"): msg += f". Run rate {d['run_rate']}"
+        if d.get("target"):   msg += f". Chasing {d['target']}"
+        return msg
+    return "Sir, live commentary not available right now."
+
+# ══════════════════════════════════════════════════════════════════════
+#  INJURY / NEWS / TOSS / PLAYING 11
 # ══════════════════════════════════════════════════════════════════════
 def get_injury_news(team=None):
-    q = f"{team} IPL 2026 injury ruled out fitness update" if team else "IPL 2026 player injury ruled out update news"
+    q = f"{team} IPL 2026 injury ruled out fitness" if team else "IPL 2026 player injury ruled out update"
     res = search(q, mode="news", days="w", n=8)
     injuries = []
     for r in res:
         title = r.get("title","")
         body  = r.get("body","")
-        # Title first (more reliable)
         if any(w in title.lower() for w in ["injur","ruled out","doubtful","fitness","unavailable"]):
-            ct = clean_line(title.split("|")[0])
-            if len(ct) > 10: injuries.append(ct)
-        # Body lines
+            ct = clean(title.split("|")[0])
+            if len(ct) > 10 and ct not in injuries: injuries.append(ct)
         for line in re.split(r'[.\n]', body):
             line = line.strip()
-            if len(line) < 15: continue
-            if any(jw in line.lower() for jw in JUNK): continue
-            if any(w in line.lower() for w in ["injur","ruled out","doubtful","fitness","unavailable","out of"]):
-                injuries.append(clean_line(line)[:150])
+            if is_junk(line) or len(line) < 15: continue
+            if any(w in line.lower() for w in ["injur","ruled out","doubtful","fitness","unavailable"]):
+                cl = clean(line)[:150]
+                if cl not in injuries: injuries.append(cl)
             if len(injuries) >= 3: break
         if len(injuries) >= 3: break
-    injuries = list(dict.fromkeys(injuries))[:3]
-    return "Sir, injury updates: " + ". ".join(injuries) if injuries else "Sir, no major injury updates at the moment."
+    return "Sir, injury updates: " + ". ".join(list(dict.fromkeys(injuries))[:3]) if injuries else "Sir, no major injury updates."
 
-# ══════════════════════════════════════════════════════════════════════
-#  FEATURE 8: TOSS + PLAYING 11
-# ══════════════════════════════════════════════════════════════════════
-def get_toss():
-    res = search("IPL 2026 today toss result won elected bat bowl", mode="news", days="d")
-    for r in res:
-        for line in re.split(r'[.\n]', r.get("body","")):
-            if any(w in line.lower() for w in ["toss","elected","chose to","won the toss"]):
-                cl = clean_line(line)
-                if len(cl) > 15: return cl[:200]
-    return None
-
-def get_playing11():
-    res = search("IPL 2026 today playing 11 squad announced XI", mode="news", days="d")
-    for r in res:
-        for line in re.split(r'[.\n]', r.get("body","")):
-            if any(w in line.lower() for w in ["playing xi","playing 11","squad"]):
-                cl = clean_line(line)
-                if len(cl) > 20: return cl[:200]
-    return None
-
-# ══════════════════════════════════════════════════════════════════════
-#  FEATURE 9: IPL NEWS
-# ══════════════════════════════════════════════════════════════════════
 def get_ipl_news():
     res = search("IPL 2026 latest news today highlights", mode="news", days="d", n=8)
     items = []
     for r in res:
         title = r.get("title","")
-        ct = clean_line(title.split("|")[0])
-        if len(ct) > 10 and ct not in items:
-            items.append(ct)
+        ct = clean(title.split("|")[0])
+        if len(ct) > 10 and not is_junk(ct) and ct not in items: items.append(ct)
         if len(items) >= 4: break
-    return "Sir, latest IPL news: " + ". ".join(items) if items else "Sir, no fresh IPL news at the moment."
+    return "Sir, IPL news: " + ". ".join(items) if items else "Sir, no fresh news at the moment."
 
-# ══════════════════════════════════════════════════════════════════════
-#  NEW FEATURE: ORANGE CAP & PURPLE CAP
-# ══════════════════════════════════════════════════════════════════════
-def get_orange_cap():
-    res = search("IPL 2026 orange cap leading run scorer top batsman", mode="text", n=6)
-    txt = all_text(res)
-    # Pattern: "Virat Kohli - 450 runs" or "Kohli leads with 450"
-    m = re.search(r'([\w\s]+?)\s+(?:leads?|tops?|with|scored)\s+(\d{3,4})\s+runs?', txt, re.IGNORECASE)
-    if m:
-        return f"Sir, orange cap leader: {m.group(1).strip()} with {m.group(2)} runs."
-    line = best_line(res, ["orange cap","top scorer","most runs","leading"])
-    return f"Sir, {line}" if line else "Sir, orange cap data not available right now."
-
-def get_purple_cap():
-    res = search("IPL 2026 purple cap leading wicket taker top bowler", mode="text", n=6)
-    txt = all_text(res)
-    m = re.search(r'([\w\s]+?)\s+(?:leads?|tops?|with|taken?)\s+(\d{1,2})\s+wickets?', txt, re.IGNORECASE)
-    if m:
-        return f"Sir, purple cap leader: {m.group(1).strip()} with {m.group(2)} wickets."
-    line = best_line(res, ["purple cap","top wicket","most wickets","leading bowler"])
-    return f"Sir, {line}" if line else "Sir, purple cap data not available right now."
-
-# ══════════════════════════════════════════════════════════════════════
-#  NEW FEATURE: AUCTION VALUE / TEAM VALUE
-# ══════════════════════════════════════════════════════════════════════
-def get_player_value(player):
-    res = search(f"{player} IPL 2026 auction price crore salary value", mode="text", n=5)
-    txt = all_text(res)
-    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:crore|cr|lakh)', txt, re.IGNORECASE)
-    if m:
-        return f"Sir, {player} IPL auction value: {m.group(1)} crore."
-    line = best_line(res, ["crore","auction","price","sold","bought"])
-    return f"Sir, {line}" if line else f"Sir, {player} ki auction value nahi mili."
-
-# ══════════════════════════════════════════════════════════════════════
-#  NEW FEATURE: TEAM STRENGTH METER
-# ══════════════════════════════════════════════════════════════════════
-def get_team_strength(team):
-    res = search(f"{team} IPL 2026 form squad strength analysis", mode="text", n=6)
-    txt = all_text(res)
-    parts = []
-    for line in re.split(r'[.\n]', txt):
-        line = line.strip()
-        if any(jw in line.lower() for jw in JUNK): continue
-        if team.split()[0].lower() in line.lower():
-            if any(w in line.lower() for w in ["strong","weak","form","squad","batting","bowling","win","loss"]):
-                if 20 < len(line) < 180:
-                    parts.append(clean_line(line))
-                if len(parts) >= 3: break
-    if parts:
-        return f"Sir, {team} analysis: " + ". ".join(parts)
-    return f"Sir, {team} team strength analysis not available right now."
-
-# ══════════════════════════════════════════════════════════════════════
-#  NEW FEATURE: COMMENTARY SIMULATOR
-# ══════════════════════════════════════════════════════════════════════
-def get_live_commentary():
-    res = search("IPL 2026 live commentary ball by ball today", mode="news", days="d", n=8)
-    txt = all_text(res)
-    commentary = []
-    for line in re.split(r'[.\n]', txt):
-        line = line.strip()
-        if len(line) < 20: continue
-        if any(jw in line.lower() for jw in JUNK): continue
-        if any(w in line.lower() for w in ["four","six","wicket","out","boundary","dot","single","double","caught","bowled","lbw"]):
-            commentary.append(clean_line(line)[:150])
-            if len(commentary) >= 3: break
-    if commentary:
-        return "Sir, live commentary: " + ". ".join(commentary)
-    # Fallback: scorecard based
-    d = get_full_scorecard()
-    if d:
-        return f"Sir, current match situation: {d.get('runs','?')} for {d.get('wickets','?')} in {d.get('overs','?')} overs. Run rate {d.get('run_rate','?')}."
-    return "Sir, live commentary not available right now."
-
-# ══════════════════════════════════════════════════════════════════════
-#  NEW FEATURE: FANTASY TEAM
-# ══════════════════════════════════════════════════════════════════════
-def get_fantasy_xi():
-    match = get_today_match()
-    if not match:
-        return "Sir, today's match not found for fantasy suggestion."
-    res = search(f"{match} IPL 2026 fantasy team best picks captain", mode="text", n=6)
-    picks = []
+def get_toss():
+    res = search("IPL 2026 today toss result won elected", mode="news", days="d")
     for r in res:
-        body = r.get("body","")
-        for line in re.split(r'[.\n]', body):
-            line = line.strip()
-            if any(jw in line.lower() for jw in JUNK): continue
-            if any(w in line.lower() for w in ["fantasy","captain","vice","must pick","differential","best pick"]):
-                if len(line) > 15:
-                    picks.append(clean_line(line)[:150])
-                if len(picks) >= 3: break
-        if len(picks) >= 3: break
-    if picks:
-        return f"Sir, fantasy picks for {match}: " + ". ".join(picks)
-    # Fallback: in-form players
-    txt = all_text(res)
-    players_found = []
-    for k, v in IPL_PLAYERS.items():
-        if k in txt.lower() and v not in players_found: players_found.append(v)
-        if len(players_found) >= 7: break
-    if players_found:
-        return f"Sir, recommended fantasy picks for {match}: {', '.join(players_found[:7])}"
-    return f"Sir, fantasy data for {match} not available yet."
+        for line in re.split(r'[.\n]', r.get("body","")):
+            if any(w in line.lower() for w in ["toss","elected","chose to","won the toss"]):
+                cl = clean(line.strip())
+                if len(cl) > 15 and not is_junk(cl): return cl[:200]
+    return None
+
+def get_playing11():
+    res = search("IPL 2026 today playing 11 squad XI announced", mode="news", days="d")
+    for r in res:
+        for line in re.split(r'[.\n]', r.get("body","")):
+            if any(w in line.lower() for w in ["playing xi","playing 11","squad"]):
+                cl = clean(line.strip())
+                if len(cl) > 20 and not is_junk(cl): return cl[:200]
+    return None
 
 # ══════════════════════════════════════════════════════════════════════
-#  PLAYER STATS
+#  PLAYER STATS / BOWLING / COMPARE / H2H / BOWLERS AGAINST
 # ══════════════════════════════════════════════════════════════════════
 def get_player_stats(player):
     res  = search(f"{player} IPL 2026 stats runs scored", mode="text", n=6)
@@ -1238,38 +1251,33 @@ def get_player_stats(player):
         PLAYER_CACHE[player.lower()] = {"runs": scores, "type": "batting"}
     if parts: return f"Sir, {player}: " + ", ".join(parts)
     line = best_line(res, ["run","score","average","strike","century"])
-    return f"Sir, {line}" if line else f"Sir, {player} ke IPL 2026 stats nahi mile."
+    return f"Sir, {line}" if line else f"Sir, {player} ke stats nahi mile."
 
 def get_bowling_stats(player):
     res = search(f"{player} IPL 2026 bowling wickets economy figures", mode="text", n=6)
     txt = all_text(res)
-    wickets_list = []
+    wl = []
     for w, r in re.findall(r'\b([0-5])/(\d{1,3})\b', txt):
         wv, rv = int(w), int(r)
-        if rv < 80: wickets_list.append(wv)
+        if rv < 80: wl.append(wv)
     total_m = re.search(r'(\d{1,3})\s+wickets?\s+in\s+(\d+)\s+match', txt, re.IGNORECASE)
     eco_m   = re.search(r'economy[\s:]+(\d{1,2}\.?\d?)', txt, re.IGNORECASE)
     parts   = []
     if total_m: parts.append(f"Total {total_m.group(1)} wickets in {total_m.group(2)} matches")
     if eco_m:   parts.append(f"Economy {eco_m.group(1)}")
-    if wickets_list:
-        wl = wickets_list[:5]
-        parts.append(f"Recent figures {wl}, avg {round(sum(wl)/len(wl),1)}")
-        PLAYER_CACHE[player.lower()] = {"wickets": wl, "type": "bowling"}
+    if wl:
+        parts.append(f"Recent figures {wl[:5]}, avg {round(sum(wl[:5])/len(wl[:5]),1)}")
+        PLAYER_CACHE[player.lower()] = {"wickets": wl[:5], "type": "bowling"}
     if parts: return f"Sir, {player} bowling: " + ", ".join(parts)
     line = best_line(res, ["wicket","economy","bowling","figures"])
     return f"Sir, {line}" if line else f"Sir, {player} ka bowling data nahi mila."
 
 def compare_players(p1, p2):
-    s1 = get_player_stats(p1)
-    s2 = get_player_stats(p2)
+    s1 = get_player_stats(p1); s2 = get_player_stats(p2)
     res = search(f"{p1} vs {p2} IPL 2026 comparison", mode="text", n=4)
     extra = best_line(res, [p1.split()[0], p2.split()[0]])
     return f"{s1}. {s2}." + (f" {extra}" if extra else "")
 
-# ══════════════════════════════════════════════════════════════════════
-#  HEAD TO HEAD + BOWLER vs BATSMAN
-# ══════════════════════════════════════════════════════════════════════
 def get_h2h(t1, t2):
     res = search(f"{t1} vs {t2} IPL head to head record wins", mode="text", n=5)
     line = best_line(res, ["won","win","head","record","beat","times"])
@@ -1284,161 +1292,198 @@ def get_bowlers_against(batsman):
         if bname.lower() not in batsman.lower() and len(bname) > 5: bowlers.append(bname)
     line = best_line(res, ["dismiss","wicket","out","bowler"])
     result = ""
-    if bowlers: result += f"Sir, {batsman} ko sabse zyada dismiss karne wale: {', '.join(list(dict.fromkeys(bowlers))[:3])}. "
+    if bowlers: result += f"Sir, {batsman} ko dismiss karne wale: {', '.join(list(dict.fromkeys(bowlers))[:3])}. "
     if line:    result += line
-    return result or f"Sir, {batsman} ke against bowler data nahi mila."
+    return result or f"Sir, {batsman} ke against data nahi mila."
+
+def get_player_value(player):
+    res = search(f"{player} IPL auction price crore salary 2026", mode="text", n=5)
+    txt = all_text(res)
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:crore|cr)\b', txt, re.IGNORECASE)
+    if m: return f"Sir, {player} IPL value: {m.group(1)} crore."
+    line = best_line(res, ["crore","auction","price","sold"])
+    return f"Sir, {line}" if line else f"Sir, {player} ki auction value nahi mili."
+
+def get_fantasy_xi():
+    match = get_today_match()
+    if not match: return "Sir, today's match not found."
+    res = search(f"{match} IPL 2026 fantasy team best picks captain differential", mode="text", n=6)
+    picks = []
+    for r in res:
+        for line in re.split(r'[.\n]', r.get("body","")):
+            line = line.strip()
+            if is_junk(line) or len(line) < 15: continue
+            if any(w in line.lower() for w in ["captain","must pick","differential","fantasy","best pick","vice"]):
+                picks.append(clean(line)[:150])
+                if len(picks) >= 3: break
+        if len(picks) >= 3: break
+    if picks: return f"Sir, fantasy picks for {match}: " + ". ".join(picks)
+    txt = all_text(res)
+    pf = []
+    for k,v in IPL_PLAYERS.items():
+        if k in txt.lower() and v not in pf: pf.append(v)
+        if len(pf) >= 7: break
+    if pf: return f"Sir, fantasy picks for {match}: {', '.join(pf[:7])}"
+    return "Sir, fantasy data not available yet."
 
 # ══════════════════════════════════════════════════════════════════════
 #  ML PREDICTIONS
 # ══════════════════════════════════════════════════════════════════════
 def predict_next_score(player):
     scores = PLAYER_CACHE.get(player.lower(), {}).get("runs", [])
-    if len(scores) < 3:
-        get_player_stats(player)
-        scores = PLAYER_CACHE.get(player.lower(), {}).get("runs", [])
+    if len(scores) < 3: get_player_stats(player); scores = PLAYER_CACHE.get(player.lower(), {}).get("runs", [])
     if len(scores) >= 3:
         try:
             from sklearn.linear_model import LinearRegression
             X = np.array(range(len(scores))).reshape(-1,1)
-            model = LinearRegression().fit(X, np.array(scores))
-            return max(0, round(model.predict([[len(scores)]])[0]))
+            return max(0, round(LinearRegression().fit(X, np.array(scores)).predict([[len(scores)]])[0]))
         except ImportError:
             return round(sum(scores[-5:])/min(len(scores),5))
     return None
 
 def predict_next_wickets(player):
     wickets = PLAYER_CACHE.get(player.lower(), {}).get("wickets", [])
-    if len(wickets) < 3:
-        get_bowling_stats(player)
-        wickets = PLAYER_CACHE.get(player.lower(), {}).get("wickets", [])
+    if len(wickets) < 3: get_bowling_stats(player); wickets = PLAYER_CACHE.get(player.lower(), {}).get("wickets", [])
     if len(wickets) >= 3:
         try:
             from sklearn.linear_model import LinearRegression
             X = np.array(range(len(wickets))).reshape(-1,1)
-            model = LinearRegression().fit(X, np.array(wickets))
-            return max(0, round(model.predict([[len(wickets)]])[0]))
+            return max(0, round(LinearRegression().fit(X, np.array(wickets)).predict([[len(wickets)]])[0]))
         except ImportError:
             return round(sum(wickets[-5:])/min(len(wickets),5))
     return None
 
 def predict_win_live(runs, wickets, overs, target=185):
-    balls_done  = int(overs)*6 + round((overs%1)*10)
-    balls_left  = max(1, 120 - balls_done)
-    runs_needed = max(1, target - runs)
-    req_rr = (runs_needed / balls_left * 6)
-    curr_rr = (runs / overs) if overs > 0 else 0
-    chance = 50 + (curr_rr - req_rr)*5 - wickets*8
+    balls_done = int(overs)*6 + round((overs%1)*10)
+    balls_left = max(1, 120-balls_done)
+    runs_needed = max(1, target-runs)
+    req_rr = runs_needed/balls_left*6
+    curr_rr = (runs/overs) if overs > 0 else 0
+    chance = 50 + (curr_rr-req_rr)*5 - wickets*8
     return max(5, min(95, round(chance)))
 
 # ══════════════════════════════════════════════════════════════════════
-#  GRAPHS
+#  GRAPHS — FIXED (called from main thread via queue)
 # ══════════════════════════════════════════════════════════════════════
-def show_momentum_graph():
-    print("\n📊 Generating analytics dashboard sir...")
-    d = get_full_scorecard()
+def _draw_momentum():
     run_hist  = MATCH_STATE.get("run_history", [])
     rr_hist   = MATCH_STATE.get("rr_history", [])
     wkt_overs = MATCH_STATE.get("wicket_overs", [])
+
+    # Ensure enough data
     if len(run_hist) < 5:
         np.random.seed(42)
         run_hist = list(np.cumsum(np.random.randint(4,12,20)))
-        rr_hist  = [round(run_hist[i]/(i+1),2) for i in range(len(run_hist))]
         wkt_overs = [3,7,11,15,18]
+
+    # FIX: rr_hist must match run_hist length
+    if len(rr_hist) != len(run_hist):
+        rr_hist = [round(run_hist[i]/(i+1),2) for i in range(len(run_hist))]
+
     overs  = list(range(1, len(run_hist)+1))
     target = MATCH_STATE.get("target",0) or max(run_hist)+30
+    t1 = MATCH_STATE.get("team1","Team1")
+    t2 = MATCH_STATE.get("team2","Team2")
 
     fig = plt.figure(figsize=(15,10), facecolor='#0d1117')
-    gs  = gridspec.GridSpec(3,2,figure=fig,hspace=0.4,wspace=0.35)
+    gs  = gridspec.GridSpec(3,2, figure=fig, hspace=0.45, wspace=0.35)
 
+    # Plot 1: Cumulative runs
     ax1 = fig.add_subplot(gs[0,:])
     ax1.set_facecolor('#161b22')
-    ax1.plot(overs,run_hist,color='#00ff88',lw=2.5,marker='o',ms=4,label='Runs',zorder=3)
-    if target: ax1.axhline(target,color='#ff4444',lw=2,ls='--',label=f'Target {target}')
+    ax1.plot(overs, run_hist, color='#00ff88', lw=2.5, marker='o', ms=4, label='Runs', zorder=3)
+    if target: ax1.axhline(target, color='#ff4444', lw=2, ls='--', label=f'Target {target}')
     for wo in wkt_overs:
-        if wo<=len(run_hist):
-            ax1.axvline(wo,color='#ff6b6b',lw=1.5,ls=':',alpha=0.7)
-    ax1.fill_between(overs,run_hist,alpha=0.15,color='#00ff88')
-    t1 = MATCH_STATE.get("team1","Team1"); t2 = MATCH_STATE.get("team2","Team2")
-    ax1.set_title(f'📈 Match Momentum — {t1} vs {t2}',color='white',fontsize=13,fontweight='bold')
-    ax1.set_xlabel('Over',color='#8b949e'); ax1.set_ylabel('Runs',color='#8b949e')
-    ax1.tick_params(colors='#8b949e',labelsize=8)
-    ax1.legend(framealpha=0.3,labelcolor='white',fontsize=9)
+        if 1 <= wo <= len(run_hist):
+            ax1.axvline(wo, color='#ff6b6b', lw=1.5, ls=':', alpha=0.7)
+    ax1.fill_between(overs, run_hist, alpha=0.15, color='#00ff88')
+    ax1.set_title(f'📈 Match Momentum — {t1} vs {t2}', color='white', fontsize=13, fontweight='bold')
+    ax1.set_xlabel('Over', color='#8b949e'); ax1.set_ylabel('Runs', color='#8b949e')
+    ax1.tick_params(colors='#8b949e', labelsize=8)
+    ax1.legend(framealpha=0.3, labelcolor='white', fontsize=9)
     for sp in ['top','right']: ax1.spines[sp].set_visible(False)
     for sp in ['bottom','left']: ax1.spines[sp].set_color('#30363d')
-    ax1.yaxis.grid(True,color='#21262d',lw=0.8,zorder=0)
+    ax1.yaxis.grid(True, color='#21262d', lw=0.8, zorder=0)
 
+    # Plot 2: Run rate per over — FIX: same length guaranteed
     ax2 = fig.add_subplot(gs[1,0])
     ax2.set_facecolor('#161b22')
     rr_colors = ['#00ff88' if r>=8 else '#ffd700' if r>=6 else '#ef5350' for r in rr_hist]
-    ax2.bar(overs,rr_hist,color=rr_colors,width=0.7,zorder=3)
-    ax2.axhline(np.mean(rr_hist),color='#ff9800',lw=2,ls='--',alpha=0.8,label=f'Avg RR {np.mean(rr_hist):.1f}')
-    ax2.set_title('⚡ Run Rate Per Over',color='white',fontsize=11,fontweight='bold')
-    ax2.set_xlabel('Over',color='#8b949e'); ax2.set_ylabel('RR',color='#8b949e')
-    ax2.tick_params(colors='#8b949e',labelsize=8)
-    ax2.legend(framealpha=0.3,labelcolor='white',fontsize=9)
+    ax2.bar(overs, rr_hist, color=rr_colors, width=0.7, zorder=3)
+    avg_rr = np.mean(rr_hist)
+    ax2.axhline(avg_rr, color='#ff9800', lw=2, ls='--', alpha=0.8, label=f'Avg {avg_rr:.1f}')
+    ax2.set_title('⚡ Run Rate Per Over', color='white', fontsize=11, fontweight='bold')
+    ax2.set_xlabel('Over', color='#8b949e'); ax2.set_ylabel('RR', color='#8b949e')
+    ax2.tick_params(colors='#8b949e', labelsize=8)
+    ax2.legend(framealpha=0.3, labelcolor='white', fontsize=9)
     for sp in ['top','right']: ax2.spines[sp].set_visible(False)
     for sp in ['bottom','left']: ax2.spines[sp].set_color('#30363d')
-    ax2.yaxis.grid(True,color='#21262d',lw=0.8,zorder=0)
+    ax2.yaxis.grid(True, color='#21262d', lw=0.8, zorder=0)
 
+    # Plot 3: Phase runs
     ax3 = fig.add_subplot(gs[1,1])
     ax3.set_facecolor('#161b22')
-    pp_r  = run_hist[5] if len(run_hist)>5 else run_hist[-1]
-    mid_r = (run_hist[14]-run_hist[5]) if len(run_hist)>14 else 0
-    dth_r = (run_hist[-1]-run_hist[14]) if len(run_hist)>14 else 0
-    phases = ['Powerplay\n(1-6)','Middle\n(7-15)','Death\n(16-20)']
-    p_runs = [pp_r,max(0,mid_r),max(0,dth_r)]
-    bars3 = ax3.bar(phases,p_runs,color=['#4fc3f7','#ffd700','#ff6b6b'],width=0.5,zorder=3)
-    for bar,val in zip(bars3,p_runs):
-        ax3.text(bar.get_x()+bar.get_width()/2,bar.get_height()+1,str(val),ha='center',va='bottom',fontsize=10,color='white',fontweight='bold')
-    ax3.set_title('🏏 Runs by Phase',color='white',fontsize=11,fontweight='bold')
-    ax3.set_ylabel('Runs',color='#8b949e')
-    ax3.tick_params(colors='#8b949e',labelsize=9)
+    n = len(run_hist)
+    pp_r  = run_hist[min(5,n-1)]
+    mid_r = max(0,(run_hist[min(14,n-1)]-run_hist[min(5,n-1)])) if n>6 else 0
+    dth_r = max(0,(run_hist[-1]-run_hist[min(14,n-1)])) if n>15 else 0
+    bars3 = ax3.bar(['Powerplay\n(1-6)','Middle\n(7-15)','Death\n(16-20)'],
+                    [pp_r,mid_r,dth_r], color=['#4fc3f7','#ffd700','#ff6b6b'], width=0.5, zorder=3)
+    for bar,val in zip(bars3,[pp_r,mid_r,dth_r]):
+        ax3.text(bar.get_x()+bar.get_width()/2, bar.get_height()+1, str(val),
+                 ha='center', va='bottom', fontsize=10, color='white', fontweight='bold')
+    ax3.set_title('🏏 Runs by Phase', color='white', fontsize=11, fontweight='bold')
+    ax3.set_ylabel('Runs', color='#8b949e')
+    ax3.tick_params(colors='#8b949e', labelsize=9)
     for sp in ['top','right']: ax3.spines[sp].set_visible(False)
     for sp in ['bottom','left']: ax3.spines[sp].set_color('#30363d')
-    ax3.yaxis.grid(True,color='#21262d',lw=0.8,zorder=0)
+    ax3.yaxis.grid(True, color='#21262d', lw=0.8, zorder=0)
 
+    # Plot 4: Win probability
     ax4 = fig.add_subplot(gs[2,:])
     ax4.set_facecolor('#161b22')
     win_probs = []
     for i,r in enumerate(run_hist):
         ov  = i+1
         wkt = sum(1 for wo in wkt_overs if wo<=ov)
-        win_probs.append(predict_win_live(r,wkt,float(ov),target))
-    ax4.plot(overs,win_probs,color='#e91e63',lw=2.5,marker='o',ms=3,zorder=3)
-    ax4.fill_between(overs,win_probs,50,where=[w>=50 for w in win_probs],alpha=0.2,color='#00ff88',label='Batting ahead')
-    ax4.fill_between(overs,win_probs,50,where=[w<50 for w in win_probs],alpha=0.2,color='#ef5350',label='Bowling ahead')
-    ax4.axhline(50,color='white',lw=1,ls='-',alpha=0.3)
-    ax4.set_title('🎯 Win Probability',color='white',fontsize=11,fontweight='bold')
-    ax4.set_xlabel('Over',color='#8b949e'); ax4.set_ylabel('Win %',color='#8b949e')
+        win_probs.append(predict_win_live(r, wkt, float(ov), target))
+    ax4.plot(overs, win_probs, color='#e91e63', lw=2.5, marker='o', ms=3, zorder=3)
+    ax4.fill_between(overs, win_probs, 50, where=[w>=50 for w in win_probs],
+                     alpha=0.2, color='#00ff88', label='Batting ahead')
+    ax4.fill_between(overs, win_probs, 50, where=[w<50 for w in win_probs],
+                     alpha=0.2, color='#ef5350', label='Bowling ahead')
+    ax4.axhline(50, color='white', lw=1, ls='-', alpha=0.3)
+    ax4.set_title('🎯 Win Probability Over Time', color='white', fontsize=11, fontweight='bold')
+    ax4.set_xlabel('Over', color='#8b949e'); ax4.set_ylabel('Win %', color='#8b949e')
     ax4.set_ylim(0,100)
-    ax4.tick_params(colors='#8b949e',labelsize=8)
-    ax4.legend(framealpha=0.3,labelcolor='white',fontsize=9)
+    ax4.tick_params(colors='#8b949e', labelsize=8)
+    ax4.legend(framealpha=0.3, labelcolor='white', fontsize=9)
     for sp in ['top','right']: ax4.spines[sp].set_visible(False)
     for sp in ['bottom','left']: ax4.spines[sp].set_color('#30363d')
-    ax4.yaxis.grid(True,color='#21262d',lw=0.8,zorder=0)
+    ax4.yaxis.grid(True, color='#21262d', lw=0.8, zorder=0)
 
-    plt.suptitle('JARVIS IPL ANALYTICS DASHBOARD v7.0',color='#8b949e',fontsize=10,y=0.98)
-    plt.savefig('momentum_dashboard.png',dpi=150,bbox_inches='tight',facecolor='#0d1117')
+    plt.suptitle('JARVIS IPL ANALYTICS DASHBOARD v8.0', color='#8b949e', fontsize=10, y=0.98)
+    plt.tight_layout()
+    plt.savefig('momentum_dashboard.png', dpi=150, bbox_inches='tight', facecolor='#0d1117')
     plt.show()
     print("✅ momentum_dashboard.png saved!")
 
-def show_batting_graph(player):
-    print(f"\n📊 {player} batting graph sir...")
-    res = search(f"{player} IPL 2026 innings runs each match scorecard", mode="text", n=10)
+def _draw_batting(player):
+    res = search(f"{player} IPL 2026 innings runs each match", mode="text", n=10)
     txt = all_text(res)
     scores = []
-    for h in re.findall(r'(?:scored|made|hit|smashed|struck)\s+(\d{1,3})',txt,re.IGNORECASE):
+    for h in re.findall(r'(?:scored|made|hit|smashed|struck)\s+(\d{1,3})', txt, re.IGNORECASE):
         v=int(h)
         if 0<v<180: scores.append(v)
-    for h in re.findall(r'\b(\d{1,3})\s+off\s+\d',txt):
+    for h in re.findall(r'\b(\d{1,3})\s+off\s+\d', txt):
         v=int(h)
         if 0<v<180: scores.append(v)
-    scores = list(dict.fromkeys(scores))
-    cache_s = PLAYER_CACHE.get(player.lower(),{}).get("runs",[])
-    if len(cache_s)>len(scores): scores=cache_s
+    scores=list(dict.fromkeys(scores))
+    cs=PLAYER_CACHE.get(player.lower(),{}).get("runs",[])
+    if len(cs)>len(scores): scores=cs
     if len(scores)<5:
         avg=40
-        am=re.search(r'\b(\d{3,4})\s+runs\b',all_text(search(f"{player} IPL career batting average",mode="text",n=4)),re.IGNORECASE)
+        am=re.search(r'\b(\d{3,4})\s+runs\b', all_text(search(f"{player} IPL career batting average",mode="text",n=4)), re.IGNORECASE)
         if am: avg=min(75,max(15,int(am.group(1))//14))
         np.random.seed(sum(ord(c) for c in player))
         scores=[max(0,int(avg+np.random.randint(-int(avg*0.7),int(avg*1.2)))) for _ in range(14)]
@@ -1453,9 +1498,10 @@ def show_batting_graph(player):
     ax.axhline(50,color='#ffd700',lw=1,ls=':',alpha=0.4)
     ax.axhline(100,color='#00ff88',lw=1,ls=':',alpha=0.4)
     pred=predict_next_score(player)
-    if pred: ax.axhline(pred,color='#e91e63',lw=2,ls='-.',alpha=0.9,label=f'ML Pred: {pred}')
+    if pred: ax.axhline(pred,color='#e91e63',lw=2,ls='-.',alpha=0.9)
     for bar,s in zip(bars,scores):
-        ax.text(bar.get_x()+bar.get_width()/2,bar.get_height()+1.5,str(s),ha='center',va='bottom',fontsize=9,color='white',fontweight='bold')
+        ax.text(bar.get_x()+bar.get_width()/2,bar.get_height()+1.5,str(s),
+                ha='center',va='bottom',fontsize=9,color='white',fontweight='bold')
     ax.set_xlabel('Match',color='#8b949e',fontsize=11); ax.set_ylabel('Runs',color='#8b949e',fontsize=11)
     ax.set_title(f'🏏 {player} — IPL 2026 Batting',color='white',fontsize=14,fontweight='bold',pad=15)
     ax.tick_params(colors='#8b949e',labelsize=9)
@@ -1472,49 +1518,49 @@ def show_batting_graph(player):
     plt.savefig(fname,dpi=150,bbox_inches='tight',facecolor='#0d1117'); plt.show()
     print(f"✅ {fname} saved!")
 
-def show_bowling_graph(player):
-    print(f"\n📊 {player} bowling graph sir...")
+def _draw_bowling(player):
     res=search(f"{player} IPL 2026 bowling figures wickets",mode="text",n=10)
-    txt=all_text(res); wickets,economy=[],[]
+    txt=all_text(res); wkts,eco=[],[]
     for w,r in re.findall(r'\b([0-5])/(\d{1,3})\b',txt):
         wv,rv=int(w),int(r)
-        if rv<80: wickets.append(wv); economy.append(round(rv/4,1))
-    cache_w=PLAYER_CACHE.get(player.lower(),{}).get("wickets",[])
-    if len(cache_w)>len(wickets): wickets=cache_w
-    if len(wickets)<5:
-        avg_w,avg_eco=1.5,8.0
-        avg_txt=all_text(search(f"{player} IPL bowling career economy",mode="text",n=4))
-        em=re.search(r'economy[\s:]+(\d{1,2}\.?\d?)',avg_txt,re.IGNORECASE)
-        wm=re.search(r'(\d{2,3})\s+wickets?\s+in\s+(\d{2,3})',avg_txt,re.IGNORECASE)
-        if em: avg_eco=min(14,max(5,float(em.group(1))))
+        if rv<80: wkts.append(wv); eco.append(round(rv/4,1))
+    cw=PLAYER_CACHE.get(player.lower(),{}).get("wickets",[])
+    if len(cw)>len(wkts): wkts=cw
+    if len(wkts)<5:
+        avg_w,avg_e=1.5,8.0
+        at=all_text(search(f"{player} IPL bowling career economy",mode="text",n=4))
+        em=re.search(r'economy[\s:]+(\d{1,2}\.?\d?)',at,re.IGNORECASE)
+        wm=re.search(r'(\d{2,3})\s+wickets?\s+in\s+(\d{2,3})',at,re.IGNORECASE)
+        if em: avg_e=min(14,max(5,float(em.group(1))))
         if wm: avg_w=min(4,max(0.5,int(wm.group(1))/int(wm.group(2))))
         np.random.seed(sum(ord(c) for c in player))
-        wickets=[max(0,min(5,int(round(avg_w+np.random.uniform(-1.2,1.8))))) for _ in range(14)]
-        economy=[round(max(4.5,min(14,avg_eco+np.random.uniform(-2,2.5))),1) for _ in range(14)]
-    wickets=wickets[-14:]; economy=(economy[-14:] if len(economy)>=len(wickets) else [8.0]*len(wickets))
-    labels=[f"M{i+1}" for i in range(len(wickets))]; pred_wkt=predict_next_wickets(player)
+        wkts=[max(0,min(5,int(round(avg_w+np.random.uniform(-1.2,1.8))))) for _ in range(14)]
+        eco=[round(max(4.5,min(14,avg_e+np.random.uniform(-2,2.5))),1) for _ in range(14)]
+    wkts=wkts[-14:]; eco=(eco[-14:] if len(eco)>=len(wkts) else [8.0]*len(wkts))
+    labels=[f"M{i+1}" for i in range(len(wkts))]; pw=predict_next_wickets(player)
     fig,(ax1,ax2)=plt.subplots(2,1,figsize=(13,9),gridspec_kw={'height_ratios':[3,2]})
     fig.patch.set_facecolor('#0d1117'); ax1.set_facecolor('#161b22')
-    wc=['#e91e63' if w==0 else '#ff9800' if w==1 else '#ffd700' if w==2 else '#00ff88' for w in wickets]
-    bars=ax1.bar(labels,wickets,color=wc,width=0.6,zorder=3)
-    ax1.plot(labels,wickets,'white',lw=1.5,marker='D',ms=5,alpha=0.7,zorder=4)
-    for bar,w in zip(bars,wickets):
-        ax1.text(bar.get_x()+bar.get_width()/2,bar.get_height()+0.05,str(w),ha='center',va='bottom',fontsize=10,color='white',fontweight='bold')
-    avg_wv=np.mean(wickets)
+    wc=['#e91e63' if w==0 else '#ff9800' if w==1 else '#ffd700' if w==2 else '#00ff88' for w in wkts]
+    bars=ax1.bar(labels,wkts,color=wc,width=0.6,zorder=3)
+    ax1.plot(labels,wkts,'white',lw=1.5,marker='D',ms=5,alpha=0.7,zorder=4)
+    for bar,w in zip(bars,wkts):
+        ax1.text(bar.get_x()+bar.get_width()/2,bar.get_height()+0.05,str(w),
+                 ha='center',va='bottom',fontsize=10,color='white',fontweight='bold')
+    avg_wv=np.mean(wkts)
     ax1.axhline(avg_wv,color='#03a9f4',lw=2,ls='--',alpha=0.8,label=f'Avg {avg_wv:.1f}')
-    if pred_wkt: ax1.axhline(pred_wkt,color='#e91e63',lw=2,ls='-.',alpha=0.9,label=f'ML Pred {pred_wkt}')
+    if pw: ax1.axhline(pw,color='#e91e63',lw=2,ls='-.',alpha=0.9,label=f'ML Pred {pw}')
     ax1.set_title(f'🎳 {player} — IPL 2026 Bowling',color='white',fontsize=14,fontweight='bold',pad=15)
-    ax1.set_ylabel('Wickets',color='#8b949e',fontsize=11); ax1.set_ylim(0,max(wickets)+2)
+    ax1.set_ylabel('Wickets',color='#8b949e',fontsize=11); ax1.set_ylim(0,max(wkts)+2)
     ax1.tick_params(colors='#8b949e',labelsize=9)
     for sp in ['top','right']: ax1.spines[sp].set_visible(False)
     for sp in ['bottom','left']: ax1.spines[sp].set_color('#30363d')
     ax1.yaxis.grid(True,color='#21262d',lw=0.8,zorder=0)
     ax1.legend(loc='upper right',framealpha=0.3,labelcolor='white',fontsize=9)
     ax2.set_facecolor('#161b22')
-    ax2.plot(labels,economy,color='#ff6b6b',lw=2.5,marker='o',ms=6,zorder=3)
-    ax2.fill_between(range(len(economy)),economy,alpha=0.2,color='#ff6b6b')
+    ax2.plot(labels,eco,color='#ff6b6b',lw=2.5,marker='o',ms=6,zorder=3)
+    ax2.fill_between(range(len(eco)),eco,alpha=0.2,color='#ff6b6b')
     ax2.axhline(7.5,color='#ffd700',lw=1.5,ls=':',alpha=0.7,label='Good (7.5)')
-    ax2.axhline(np.mean(economy),color='#03a9f4',lw=2,ls='--',alpha=0.8,label=f'Avg {np.mean(economy):.1f}')
+    ax2.axhline(np.mean(eco),color='#03a9f4',lw=2,ls='--',alpha=0.8,label=f'Avg {np.mean(eco):.1f}')
     ax2.set_xlabel('Match',color='#8b949e',fontsize=11); ax2.set_ylabel('Economy',color='#8b949e',fontsize=11)
     ax2.set_xticks(range(len(labels))); ax2.set_xticklabels(labels)
     ax2.tick_params(colors='#8b949e',labelsize=9)
@@ -1600,32 +1646,33 @@ def sentinel(speaker):
                 part    = data.get("partnership",0)
 
                 if wickets > last_score_state['wickets'] >= 0:
-                    msg = f"Sir, wicket has fallen. Score is {runs} for {wickets} in {overs} overs."
-                    console_banner(msg,"🚨"); speaker.Speak(msg)
+                    ov_str = f"in {overs} overs" if overs > 0 else ""
+                    msg = f"Sir, wicket has fallen. Score is {runs} for {wickets} {ov_str}."
+                    console_box(msg,"🚨"); speaker.Speak(msg)
 
                 if last_score_state['runs'] > 0:
                     if runs//50 > last_score_state['runs']//50:
                         speaker.Speak(f"Sir, batting team has crossed {(runs//50)*50} runs.")
                     if part >= 100 and last_score_state.get("partnership",0) < 100:
-                        speaker.Speak("Sir, century partnership! Outstanding batting display.")
+                        speaker.Speak("Sir, century partnership! Outstanding display.")
                     if rr > 12 and last_score_state.get("rr",0) <= 12:
-                        speaker.Speak(f"Sir, exceptional run rate of {rr} right now!")
+                        speaker.Speak(f"Sir, exceptional run rate of {rr}!")
 
                 last_score_state.update(runs=runs,wickets=wickets,overs=overs,rr=rr,partnership=part)
         except Exception as e:
-            print(f"[Sentinel] {e}")
+            print(f"[Sentinel err] {e}")
         time.sleep(60)
 
 # ══════════════════════════════════════════════════════════════════════
 #  MAIN VOICE LOOP
 # ══════════════════════════════════════════════════════════════════════
-def jarvis_loop():
+def jarvis_loop(speaker_ref):
     pythoncom.CoInitialize()
-    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+    speaker = speaker_ref
 
     def speak(text):
-        if any(x in text for x in ["/","vs","wicket","runs","overs","won","target","rate","percent","crore"]):
-            console_banner(text)
+        if any(x in text for x in ["vs","wicket","runs","overs","won","target","rate","percent","crore","cap"]):
+            console_box(text)
         else:
             print(f"Jarvis: {text}")
         speaker.Speak(text)
@@ -1654,29 +1701,26 @@ def jarvis_loop():
             if cmd == "jarvis":
                 speak("Yes sir, all systems ready.")
 
-            # TODAY MATCH
             elif any(w in cmd for w in ["today match","aaj ka match","kiska match","kaun khel","ipl today","which match","aaj kaun"]):
-                speak("Checking today's IPL match sir...")
+                speak("Checking today's match sir...")
                 ans = get_today_match()
-                speak(f"Sir, today's match is {ans}." if ans else "Sir, today's match info not found.")
+                speak(f"Sir, today's match is {ans}." if ans else "Sir, today's match not found.")
 
-            # FULL SCORECARD
             elif any(w in cmd for w in ["full score","scorecard","full update","complete score","poora score"]):
                 speak("Pulling full scorecard sir...")
                 d = get_full_scorecard()
                 if d:
                     msg = f"Sir, {d.get('runs','?')} for {d.get('wickets','?')} in {d.get('overs','?')} overs."
-                    if d.get("run_rate"):   msg += f" Run rate {d['run_rate']}."
-                    if d.get("target"):     msg += f" Target {d['target']}."
-                    if d.get("req_rate"):   msg += f" Required rate {d['req_rate']}."
-                    if d.get("runs_needed"):msg += f" Need {d['runs_needed']} more runs."
-                    if d.get("partnership"):msg += f" Partnership {d['partnership']}."
-                    if d.get("balls_left"): msg += f" {d['balls_left']} balls left."
+                    if d.get("run_rate"):    msg += f" Run rate {d['run_rate']}."
+                    if d.get("target"):      msg += f" Target {d['target']}."
+                    if d.get("req_rate"):    msg += f" Required rate {d['req_rate']}."
+                    if d.get("runs_needed"): msg += f" Need {d['runs_needed']} runs."
+                    if d.get("partnership"): msg += f" Partnership {d['partnership']}."
+                    if d.get("balls_left"):  msg += f" {d['balls_left']} balls left."
                     speak(msg)
                 else:
                     speak("Sir, live scorecard not available right now.")
 
-            # QUICK SCORE
             elif any(w in cmd for w in ["score","kya hua","kitne run","live","status","update","kya score"]):
                 speak("Checking live score sir...")
                 d = get_full_scorecard()
@@ -1684,9 +1728,8 @@ def jarvis_loop():
                     speak(f"Sir, {d.get('runs','?')} for {d.get('wickets','?')} in {d.get('overs','?')} overs. Run rate {d.get('run_rate','?')}.")
                 else:
                     ans = get_today_match()
-                    speak(f"Live score not available. Today's match is {ans}." if ans else "No live match currently sir.")
+                    speak(f"Live score not available. Today's match: {ans}." if ans else "No live match sir.")
 
-            # RUN RATE
             elif any(w in cmd for w in ["run rate","required rate","rrr","current rate","kitna rate"]):
                 d = get_full_scorecard()
                 if d:
@@ -1698,61 +1741,51 @@ def jarvis_loop():
                 else:
                     speak("Sir, no live match data.")
 
-            # COMMENTARY
-            elif any(w in cmd for w in ["commentary","ball by ball","what happened","last ball","kya hua abhi"]):
+            elif any(w in cmd for w in ["commentary","ball by ball","what happened","kya hua abhi","last ball"]):
                 speak("Fetching live commentary sir...")
                 speak(get_live_commentary())
 
-            # SCHEDULE
-            elif any(w in cmd for w in ["schedule","fixtures","kab hai","next match","agle match","yesterday","kal","last match","tomorrow","upcoming","agle"]):
+            elif any(w in cmd for w in ["schedule","fixtures","kab hai","next match","agle match",
+                                         "yesterday","kal","last match","tomorrow","upcoming","agle","pichle"]):
                 day = "today"
                 if any(w in cmd for w in ["yesterday","beeta","last match","pichle"]): day = "yesterday"
                 elif any(w in cmd for w in ["tomorrow","kal","next match","agle","upcoming"]): day = "tomorrow"
                 speak(f"Checking {day} schedule sir...")
                 speak(get_match_schedule(day))
 
-            # POINTS TABLE
             elif any(w in cmd for w in ["points table","standings","ranking","kaun upar","table","leaderboard"]):
                 speak("Fetching IPL standings sir...")
                 speak(get_points_table())
 
-            # ORANGE CAP
-            elif any(w in cmd for w in ["orange cap","top scorer","most runs","leading batsman","run list"]):
-                speak("Checking orange cap standings sir...")
+            elif any(w in cmd for w in ["orange cap","top scorer","most runs","leading batsman","batting list"]):
+                speak("Checking orange cap sir...")
                 speak(get_orange_cap())
 
-            # PURPLE CAP
-            elif any(w in cmd for w in ["purple cap","top wicket","most wickets","leading bowler","wicket list"]):
-                speak("Checking purple cap standings sir...")
+            elif any(w in cmd for w in ["purple cap","top wicket","most wickets","leading bowler","bowling list"]):
+                speak("Checking purple cap sir...")
                 speak(get_purple_cap())
 
-            # PITCH
             elif any(w in cmd for w in ["pitch","pitch report","surface","batting surface","ground report"]):
                 speak("Fetching pitch report sir...")
                 speak(get_pitch_report())
 
-            # WEATHER
             elif any(w in cmd for w in ["weather","rain","mausam","barish","temperature","dew","forecast"]):
-                speak("Checking weather conditions sir...")
+                speak("Checking weather sir...")
                 speak(get_weather_report())
 
-            # INJURY
             elif any(w in cmd for w in ["injury","injured","fit","fitness","ruled out","unavailable","kaun fit"]):
-                team = find_teams(cmd)
+                teams = find_teams(cmd)
                 speak("Checking injury updates sir...")
-                speak(get_injury_news(team[0] if team else None))
+                speak(get_injury_news(teams[0] if teams else None))
 
-            # IPL NEWS
             elif any(w in cmd for w in ["news","latest","highlights","headlines","kya hua aaj","updates"]):
                 speak("Fetching latest IPL news sir...")
                 speak(get_ipl_news())
 
-            # FANTASY
             elif any(w in cmd for w in ["fantasy","dream11","best 11","fantasy team","who to pick","best pick"]):
                 speak("Analyzing fantasy picks sir...")
                 speak(get_fantasy_xi())
 
-            # AUCTION / PLAYER VALUE
             elif any(w in cmd for w in ["auction","price","value","crore","kitne mein","salary","worth"]):
                 player = find_player(cmd)
                 if not player:
@@ -1762,7 +1795,6 @@ def jarvis_loop():
                 speak(f"Checking {player} auction value sir...")
                 speak(get_player_value(player))
 
-            # TEAM STRENGTH
             elif any(w in cmd for w in ["team strength","squad analysis","team form","team analysis","kaisi team"]):
                 teams = find_teams(cmd)
                 if teams:
@@ -1773,15 +1805,14 @@ def jarvis_loop():
                     try:
                         tc = listen_once()
                         t = find_teams(tc)
-                        speak(get_team_strength(t[0]) if t else "Team not recognized sir.")
+                        speak(get_team_strength(t[0]) if t else "Team not found sir.")
                     except: continue
 
-            # WIN PREDICTION
             elif any(w in cmd for w in ["predict","kaun jeetega","win","chance","jeetne","winner","prediction","win probability"]):
                 d = get_full_scorecard()
                 if d and d.get("runs"):
                     prob = predict_win_live(d['runs'],d.get('wickets',0),d.get('overs',1),d.get('target',185))
-                    speak(f"Sir, based on current dynamics, batting team has {prob} percent chance of winning.")
+                    speak(f"Sir, batting team has {prob} percent chance of winning based on current dynamics.")
                 else:
                     speak("Sir, which player? Batting or bowling prediction?")
                     try:
@@ -1789,22 +1820,20 @@ def jarvis_loop():
                         player = find_player(pred_cmd) or pred_cmd.strip().title()
                         if "bowl" in pred_cmd or "wicket" in pred_cmd:
                             pred = predict_next_wickets(player)
-                            speak(f"Sir, {player} predicted wickets next match: {pred}." if pred else "Insufficient data sir.")
+                            speak(f"Sir, {player} predicted wickets: {pred}." if pred else "Insufficient data sir.")
                         else:
                             pred = predict_next_score(player)
-                            speak(f"Sir, {player} predicted next innings: {pred} runs." if pred else "Insufficient data sir.")
+                            speak(f"Sir, {player} predicted next score: {pred} runs." if pred else "Insufficient data sir.")
                     except:
-                        speak("Sir, prediction requires match data.")
+                        speak("Sir, prediction needs match data.")
 
-            # TOSS / PLAYING 11
             elif any(w in cmd for w in ["toss","playing 11","playing eleven","squad","eleven"]):
                 speak("Checking toss and squad sir...")
-                toss=get_toss(); p11=get_playing11()
+                toss = get_toss(); p11 = get_playing11()
                 if toss: speak(toss)
                 if p11:  speak(p11)
-                if not toss and not p11: speak("Sir, toss information not available yet.")
+                if not toss and not p11: speak("Sir, toss info not available yet.")
 
-            # PLAYER STATS
             elif any(w in cmd for w in ["stats","performance","record","kaisa khelta","batting stats","runs banaye"]):
                 player = find_player(cmd)
                 if not player:
@@ -1814,7 +1843,6 @@ def jarvis_loop():
                 speak(f"Fetching {player} stats sir...")
                 speak(get_player_stats(player))
 
-            # BOWLING STATS
             elif any(w in cmd for w in ["bowling stats","bowling record","kitne wicket","bowling figures","economy rate"]):
                 player = find_player(cmd)
                 if not player:
@@ -1824,7 +1852,6 @@ def jarvis_loop():
                 speak(f"Fetching {player} bowling sir...")
                 speak(get_bowling_stats(player))
 
-            # COMPARE
             elif any(w in cmd for w in ["compare","versus","better player","mukabla"]):
                 plist = []
                 for k,v in IPL_PLAYERS.items():
@@ -1839,17 +1866,16 @@ def jarvis_loop():
                             pts = said.lower().split(" and ")
                             p1 = find_player(pts[0]) or pts[0].strip().title()
                             p2 = find_player(pts[1]) or pts[1].strip().title()
-                        else: speak("Please use 'and' between names sir."); continue
+                        else: speak("Please use 'and' sir."); continue
                     except: continue
                 speak(f"Comparing {p1} and {p2} sir...")
                 speak(compare_players(p1,p2))
 
-            # MOMENTUM GRAPH
-            elif any(w in cmd for w in ["momentum","dashboard","analytics","win graph","match graph","full graph"]):
-                speak("Generating full analytics dashboard sir...")
-                threading.Thread(target=show_momentum_graph, daemon=True).start()
+            # GRAPHS — put in queue for main thread
+            elif any(w in cmd for w in ["momentum","dashboard","analytics","match graph","full graph"]):
+                speak("Generating analytics dashboard sir, opening now...")
+                GRAPH_QUEUE.put(("momentum", None))
 
-            # BATTING GRAPH
             elif any(w in cmd for w in ["batting graph","run graph","batting chart"]):
                 player = find_player(cmd)
                 if not player:
@@ -1857,9 +1883,8 @@ def jarvis_loop():
                     try: player = find_player(listen_once()) or listen_once().strip().title()
                     except: continue
                 speak(f"Generating {player} batting graph sir...")
-                threading.Thread(target=show_batting_graph, args=(player,), daemon=True).start()
+                GRAPH_QUEUE.put(("batting", player))
 
-            # BOWLING GRAPH
             elif any(w in cmd for w in ["bowling graph","wicket graph","bowling chart"]):
                 player = find_player(cmd)
                 if not player:
@@ -1867,9 +1892,8 @@ def jarvis_loop():
                     try: player = find_player(listen_once()) or listen_once().strip().title()
                     except: continue
                 speak(f"Generating {player} bowling graph sir...")
-                threading.Thread(target=show_bowling_graph, args=(player,), daemon=True).start()
+                GRAPH_QUEUE.put(("bowling", player))
 
-            # GENERIC GRAPH
             elif any(w in cmd for w in ["graph","chart","dikhao"]):
                 player = find_player(cmd)
                 if not player:
@@ -1880,22 +1904,20 @@ def jarvis_loop():
                 try:
                     gt = listen_once().lower()
                     if "bat" in gt or "run" in gt:
-                        threading.Thread(target=show_batting_graph, args=(player,), daemon=True).start()
+                        GRAPH_QUEUE.put(("batting", player))
                     else:
-                        threading.Thread(target=show_bowling_graph, args=(player,), daemon=True).start()
+                        GRAPH_QUEUE.put(("bowling", player))
                 except:
-                    threading.Thread(target=show_batting_graph, args=(player,), daemon=True).start()
+                    GRAPH_QUEUE.put(("batting", player))
 
-            # HEAD TO HEAD
             elif any(w in cmd for w in ["head to head","h2h"]):
                 teams = find_teams(cmd)
                 if len(teams) >= 2:
                     speak(f"Checking {teams[0]} vs {teams[1]} records sir...")
                     speak(get_h2h(teams[0],teams[1]))
                 else:
-                    speak("Sir, please name two teams. For example, MI vs CSK head to head.")
+                    speak("Sir, name two teams. Example: MI vs CSK head to head.")
 
-            # BOWLERS AGAINST
             elif any(w in cmd for w in ["kaun out karega","weakness","kamzori","kaun out kar","dismiss","out kar sakta","out karega","best bowler against"]):
                 player = find_player(cmd)
                 if not player:
@@ -1905,11 +1927,9 @@ def jarvis_loop():
                 speak(f"Analyzing bowlers against {player} sir...")
                 speak(get_bowlers_against(player))
 
-            # HELP
             elif any(w in cmd for w in ["help","kya kar sakta","features","commands","capabilities"]):
-                speak("Sir, my capabilities: Full scorecard. Run rate. Commentary. Schedule. Points table. Orange cap. Purple cap. Pitch report. Weather. Injury updates. News. Fantasy team. Player auction value. Team strength. Win prediction. Player and bowling stats. Player comparison. Momentum dashboard. Batting and bowling graphs. Head to head. Bowler analysis.")
+                speak("Sir, I can: Full scorecard. Run rate. Commentary. Schedule. Points table. Orange and purple cap. Pitch report. Weather. Injury updates. IPL news. Fantasy team. Auction price. Team strength. Win prediction. Player stats. Bowling stats. Comparison. Momentum dashboard. Batting and bowling graphs. Head to head. Bowler analysis.")
 
-            # EXIT
             elif any(w in cmd for w in ["exit","stop","bye","goodbye","band karo","shutdown","shut down"]):
                 speak("Goodbye sir. Jarvis signing off. Have a great day.")
                 os._exit(0)
@@ -1922,23 +1942,24 @@ def jarvis_loop():
 
 # ══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║        JARVIS IPL INTELLIGENCE AGENT v7.0 PRO                   ║")
-    print("╠══════════════════════════════════════════════════════════════════╣")
-    print("║  LIVE    │ score | full score | run rate | commentary           ║")
-    print("║  MATCH   │ today match | toss | playing 11 | pitch | weather   ║")
-    print("║  INTEL   │ news | injury | fantasy | orange cap | purple cap   ║")
-    print("║  STATS   │ Virat stats | Bumrah bowling | compare X and Y      ║")
-    print("║  VALUE   │ Virat auction price | MI team strength              ║")
-    print("║  PREDICT │ predict | win probability | Virat next score        ║")
-    print("║  GRAPHS  │ momentum | Virat batting graph | Bumrah bowling     ║")
-    print("║  H2H     │ MI vs CSK head to head | Virat ko kaun out kar      ║")
-    print("║  TABLE   │ points table | schedule | yesterday | tomorrow      ║")
-    print("║  AUTO    │ Wicket alerts | Milestone | Partnership | RR alerts ║")
-    print("╚══════════════════════════════════════════════════════════════════╝")
+    # Init COM for main thread
+    pythoncom.CoInitialize()
+    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+
     print()
-    voice_thread = threading.Thread(target=jarvis_loop)
-    voice_thread.daemon = True
-    voice_thread.start()
+
+    # Voice loop in background thread
+    vt = threading.Thread(target=jarvis_loop, args=(speaker,), daemon=True)
+    vt.start()
+
+    # Main thread handles graphs (fixes matplotlib thread error)
     while True:
-        time.sleep(1)
+        try:
+            task, arg = GRAPH_QUEUE.get(timeout=1)
+            if   task == "momentum": _draw_momentum()
+            elif task == "batting":  _draw_batting(arg)
+            elif task == "bowling":  _draw_bowling(arg)
+        except queue.Empty:
+            pass
+        except Exception as e:
+            print(f"[Graph err] {e}")

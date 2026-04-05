@@ -747,7 +747,7 @@
 
 
 """
-JARVIS - REAL IPL 2026 INTELLIGENCE AGENT v9.0
+JARVIS - REAL IPL 2026 INTELLIGENCE AGENT v10.0
 ===============================================
 Real agent - intelligent analysis, fresh data, complete answers
 """
@@ -805,12 +805,35 @@ def search(query, mode="news", days="w", n=8, retries=3):
 def all_text(res):
     return " ".join(r.get("title","")+" "+r.get("body","") for r in res)
 
+# Known glued word patterns from scraping artifacts
+GLUED_PATTERNS = re.compile(
+    r'(?:teamsin|racethe|tablein|pointsin|seasonin|matchin|playoffrace|'
+    r'topteam|leaguein|playersin|wicketin|runsin|scorein|overin|ballin)',
+    re.IGNORECASE
+)
+
+def is_camelcase_glued(text):
+    """Detect scraping artifacts - glued words without spaces"""
+    # Check known glued patterns
+    if GLUED_PATTERNS.search(text):
+        return True
+    # Check per-word camelCase transitions
+    words = text.split()
+    if not words: return False
+    for w in words:
+        w_alpha = re.sub(r'[^a-zA-Z]', '', w)
+        if len(re.findall(r'[a-z][A-Z]', w_alpha)) >= 2:
+            return True
+    # Check density: many words >12 chars = likely glued
+    long_words = sum(1 for w in words if len(re.sub(r'[^a-zA-Z]', '', w)) > 12)
+    if long_words >= 2:
+        return True
+    return False
+
 def is_junk(line):
     ll = line.lower()
     if any(jw in ll for jw in JUNK): return True
-    # Glued camelCase
-    if len(re.findall(r'[A-Z]', line)) > 10 and len(line) < 120: return True
-    # Just numbers/timestamps
+    if is_camelcase_glued(line): return True
     if re.match(r'^[\d\s\-/:]+$', line): return True
     return False
 
@@ -818,7 +841,9 @@ def clean(text):
     text = re.sub(r'\b\d+\s+(?:hours?|minutes?|days?)\s+ago\b', '', text, flags=re.IGNORECASE)
     text = re.sub(r'(Cricbuzz|Cricinfo|ESPNcricinfo|NDTV|Hindustan\s*Times|Times\s*of\s*India'
                   r'|IPL\s*2026\s*[Ss]chedule|View\s+the|Click\s+here|Read\s+more'
-                  r'|Get\s+IPL|Explore|Stay\s+updated)', '', text, flags=re.IGNORECASE)
+                  r'|Get\s+IPL|Explore|Stay\s+updated|myKhel|check\s+out)', '', text, flags=re.IGNORECASE)
+    # Remove leading dashes/hyphens
+    text = re.sub(r'^[-–\s]+', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -925,16 +950,24 @@ def analyze_player(player, stats_text, bowling=False):
 def get_live_scorecard():
     """Fresh live data + intelligent analysis"""
     queries = [
-        "IPL 2026 live score today match batting overs wickets",
-        "IPL 2026 live scorecard today innings runs",
+        "IPL 2026 live score today match batting",
+        "IPL 2026 scorecard today live innings wickets overs",
+        "IPL 2026 today match runs wickets live update",
     ]
     data = {}
     for q in queries:
-        res = search(q, mode="news", days="d", n=10)
-        txt = all_text(res)
+        res = search(q, mode="news", days="d", n=12)
+        # Check title AND body — titles often have cleaner scores
+        all_sources = []
+        for r in res:
+            all_sources.append(r.get("title","") + " " + r.get("body",""))
+        txt = " ".join(all_sources)
         if not txt: continue
 
-        m = re.search(r'(\d{2,3})/(\d)\b', txt)
+        # Multiple score patterns
+        m = (re.search(r'(\d{2,3})/(\d)\b', txt) or
+             re.search(r'(\d{2,3})\s+for\s+(\d)\b', txt) or
+             re.search(r'(\d{2,3})-(\d)\b', txt))
         if m:
             data["runs"]    = int(m.group(1))
             data["wickets"] = int(m.group(2))
@@ -1012,22 +1045,45 @@ def get_today_match():
 # ══════════════════════════════════════════════════════════════════════
 #  SCHEDULE - intelligent
 # ══════════════════════════════════════════════════════════════════════
+# Words that indicate it's a highlight/result, not a fixture
+HIGHLIGHT_WORDS = ["highlights","crush","beat","win","lost","defeated","thrash",
+                   "stars","century","wicket haul","clinch","seal","qualify"]
+
 def get_schedule(day="today"):
     day_q = {
-        "today":     ["IPL 2026 today match fixture teams","IPL 2026 today game playing"],
-        "tomorrow":  ["IPL 2026 next match tomorrow fixture","IPL 2026 next game date venue"],
-        "yesterday": ["IPL 2026 yesterday result winner score","IPL 2026 last match result"],
+        "today":     ["IPL 2026 today match fixture teams playing date",
+                      "IPL 2026 today game who is playing"],
+        "tomorrow":  ["IPL 2026 tomorrow next match fixture date",
+                      "IPL 2026 next match upcoming fixture"],
+        "yesterday": ["IPL 2026 yesterday result winner score",
+                      "IPL 2026 last match result who won"],
     }
     for q in day_q.get(day, day_q["today"]):
         res = search(q, mode="news", days="w")
         for r in res:
-            body  = r.get("body","")
             title = r.get("title","")
+            body  = r.get("body","")
+            
+            # For tomorrow/today: must NOT be a highlight report
+            if day in ["today","tomorrow"]:
+                title_lower = title.lower()
+                if any(hw in title_lower for hw in HIGHLIGHT_WORDS):
+                    continue  # Skip highlights, we want fixture
+            
+            # Body lines with vs
             for line in re.split(r'[.\n|]', body):
                 line = line.strip()
                 if " vs " in line.lower() and 10 < len(line) < 200 and not is_junk(line):
+                    # Skip if it's a highlight sentence
+                    if day in ["today","tomorrow"] and any(hw in line.lower() for hw in HIGHLIGHT_WORDS):
+                        continue
                     return clean(line)
+            
+            # Title with vs
             if " vs " in title.lower():
+                title_lower = title.lower()
+                if day in ["today","tomorrow"] and any(hw in title_lower for hw in HIGHLIGHT_WORDS):
+                    continue
                 part = title.split("|")[0].split(",")[0]
                 c = clean(part)
                 if len(c) > 8 and not is_junk(c):
@@ -1535,7 +1591,7 @@ def _draw_momentum():
     for sp in ['bottom','left']: ax4.spines[sp].set_color('#30363d')
     ax4.yaxis.grid(True, color='#21262d', lw=0.8, zorder=0)
 
-    plt.suptitle('JARVIS IPL ANALYTICS v9.0', color='#8b949e', fontsize=10, y=0.98)
+    plt.suptitle('JARVIS IPL ANALYTICS v10.0', color='#8b949e', fontsize=10, y=0.98)
     plt.tight_layout()
     plt.savefig('momentum_dashboard.png', dpi=150, bbox_inches='tight', facecolor='#0d1117')
     plt.show()
@@ -1711,6 +1767,161 @@ def find_teams(cmd):
     for k,v in IPL_TEAMS.items():
         if k in cmd and v not in found: found.append(v)
     return found
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  NEW: MATCH SITUATION SUMMARY (complete broadcast-style)
+# ══════════════════════════════════════════════════════════════════════
+def get_full_match_situation():
+    """Pure data broadcast - NO news sentences, only scorecard + analysis"""
+    d = get_live_scorecard()
+    match = get_today_match()
+    
+    if not d and not match:
+        return "Sir, no live match data available right now."
+    if not d:
+        return f"Sir, today's match is {match}. Live score not yet available."
+    
+    runs    = d.get("runs", 0)
+    wickets = d.get("wickets", 0)
+    overs   = d.get("overs", 0.0)
+    rr      = d.get("run_rate", 0.0)
+    target  = d.get("target", 0)
+    req_rr  = d.get("req_rate", 0.0)
+    needed  = d.get("runs_needed", 0)
+    balls   = d.get("balls_left", 0)
+    part    = d.get("partnership", 0)
+    t1      = d.get("team1", MATCH_STATE.get("team1","")) or "batting team"
+    t2      = d.get("team2", MATCH_STATE.get("team2","")) or "bowling team"
+
+    msg = f"Sir, "
+
+    if target:
+        # 2nd innings chasing
+        if not needed and target and runs:
+            needed = target - runs
+        msg += f"{t1} need {needed} runs"
+        if balls: msg += f" from {balls} balls"
+        msg += f". Score: {runs} for {wickets} in {overs} overs."
+        msg += f" Current run rate {rr}."
+        if req_rr: msg += f" Required rate {req_rr}."
+        if part:   msg += f" Partnership {part} runs."
+    else:
+        # 1st innings - project wisely (factor in wickets)
+        remaining_overs = max(1, 20 - overs)
+        # Wicket-adjusted projection
+        wicket_factor = max(0.6, 1 - (wickets * 0.05))
+        proj = int(round(runs + (rr * remaining_overs * wicket_factor)))
+        msg += f"{t1}: {runs} for {wickets} in {overs} overs. "
+        msg += f"Run rate {rr}. Projected total {proj}."
+        if part: msg += f" Partnership {part} runs."
+
+    # Add intelligent analysis (our own logic, NOT from search)
+    analysis = analyze_situation(runs, wickets, overs, target)
+    if analysis:
+        msg += f" {analysis}"
+
+    return msg.strip()
+
+# ══════════════════════════════════════════════════════════════════════
+#  NEW: VENUE HISTORY
+# ══════════════════════════════════════════════════════════════════════
+def get_venue_history():
+    match = get_today_match() or "IPL 2026"
+    res = search(f"{match} IPL 2026 venue history stats average score records", mode="text", n=6)
+    sents = best_sentences(res, ["average","record","highest","history","venue","score","won"])
+    if sents:
+        return "Sir, venue history: " + ". ".join(sents[:3])
+    return "Sir, venue history not available right now."
+
+# ══════════════════════════════════════════════════════════════════════
+#  NEW: PLAYER FORM GUIDE (last 5 matches analysis)
+# ══════════════════════════════════════════════════════════════════════
+def get_player_form(player):
+    res = search(f"{player} IPL 2026 recent form last 5 matches performance", mode="text", n=8)
+    txt = all_text(res)
+    
+    # Get scores
+    scores = []
+    for h in re.findall(r'(?:scored|made|hit|smashed|struck)\s+(\d{1,3})', txt, re.IGNORECASE):
+        v = int(h)
+        if 0 < v < 180: scores.append(v)
+    for h in re.findall(r'\b(\d{1,3})\s+off\s+\d', txt):
+        v = int(h)
+        if 0 < v < 180: scores.append(v)
+    scores = list(dict.fromkeys(scores))[:5]
+    
+    sents = best_sentences(res, ["form","in form","out of form","performing","consecutive","run","innings"])
+    
+    if scores:
+        avg = round(sum(scores)/len(scores), 1)
+        trend = ""
+        if len(scores) >= 3:
+            if scores[-1] > scores[0]: trend = "Form is improving."
+            elif scores[-1] < scores[0]: trend = "Form has been declining."
+            else: trend = "Form is consistent."
+        
+        result = f"Sir, {player} recent form: Last scores {scores}. Average {avg}. {trend}"
+        if sents: result += " " + sents[0]
+        return result
+    
+    if sents:
+        return f"Sir, {player} form: " + ". ".join(sents[:2])
+    return f"Sir, {player} ka recent form data nahi mila."
+
+# ══════════════════════════════════════════════════════════════════════
+#  NEW: MATCH PREDICTION (before match starts)
+# ══════════════════════════════════════════════════════════════════════
+def get_match_prediction():
+    match = get_today_match()
+    if not match:
+        return "Sir, today's match not found for prediction."
+    
+    res = search(f"{match} IPL 2026 prediction who will win today analysis", mode="text", n=8)
+    sents = best_sentences(res, ["predict","favourite","win","likely","chance","advantage","stronger"])
+    
+    if sents:
+        return f"Sir, match prediction for {match}: " + ". ".join(sents[:3])
+    
+    # Fallback: H2H based
+    teams = match.split(" vs ")
+    if len(teams) == 2:
+        h2h = get_h2h(teams[0].strip(), teams[1].strip())
+        return f"Sir, {match} prediction based on head to head: {h2h}"
+    return f"Sir, prediction for {match} not available."
+
+# ══════════════════════════════════════════════════════════════════════
+#  NEW: BEST PARTNERSHIP IN MATCH
+# ══════════════════════════════════════════════════════════════════════
+def get_partnerships():
+    res = search("IPL 2026 today match partnership stand batting pair", mode="news", days="d", n=6)
+    sents = best_sentences(res, ["partnership","stand","pair","together","added","runs for"])
+    if sents:
+        return "Sir, partnership update: " + ". ".join(sents[:2])
+    d = get_live_scorecard()
+    if d and d.get("partnership"):
+        return f"Sir, current partnership is {d['partnership']} runs."
+    return "Sir, partnership data not available."
+
+# ══════════════════════════════════════════════════════════════════════
+#  NEW: QUICK MATCH SUMMARY (like end of over update)
+# ══════════════════════════════════════════════════════════════════════
+def get_over_summary():
+    res = search("IPL 2026 today over update last over runs wickets", mode="news", days="d", n=6)
+    sents = best_sentences(res, ["over","runs in the over","over ended","conceded","last over"])
+    if sents:
+        return "Sir, over update: " + ". ".join(sents[:2])
+    return get_full_match_situation()
+
+# ══════════════════════════════════════════════════════════════════════
+#  NEW: IPL 2026 RECORDS  
+# ══════════════════════════════════════════════════════════════════════
+def get_ipl_records():
+    res = search("IPL 2026 records highest score most sixes fastest fifty century", mode="text", n=6)
+    sents = best_sentences(res, ["record","highest","most","fastest","century","six","fifty"])
+    if sents:
+        return "Sir, IPL 2026 records: " + ". ".join(sents[:3])
+    return "Sir, IPL 2026 records not available right now."
 
 # ══════════════════════════════════════════════════════════════════════
 #  SENTINEL - background auto alerts
@@ -1956,7 +2167,7 @@ def jarvis_loop(speaker):
                 if not toss and not p11: speak("Sir, toss information not announced yet.")
 
             # PLAYER BATTING STATS
-            elif any(w in cmd for w in ["stats","performance","record","kaisa khelta","batting stats","runs banaye","innings","form"]):
+            elif any(w in cmd for w in ["stats","performance","kaisa khelta","batting stats","runs banaye","innings"]):
                 player = find_player(cmd)
                 if not player:
                     speak("Which player sir?")
@@ -2055,8 +2266,49 @@ def jarvis_loop(speaker):
                 speak(get_bowlers_against(player))
 
             # HELP
+            
+            # FULL SITUATION (broadcast style)
+            elif any(w in cmd for w in ["situation","match situation","full update","poori update","full status","kya ho raha","complete update"]):
+                speak("Getting complete match situation sir...")
+                speak(get_full_match_situation())
+
+            # FORM GUIDE
+            elif any(w in cmd for w in ["form","recent form","last 5","kaise chal raha","current form","in form","out of form"]):
+                player = find_player(cmd)
+                if not player:
+                    speak("Which player sir?")
+                    try: player = find_player(listen_once()) or listen_once().strip().title()
+                    except: continue
+                speak(f"Analyzing {player} recent form sir...")
+                speak(get_player_form(player))
+
+            # MATCH PREDICTION (pre-match)
+            elif any(w in cmd for w in ["match prediction","today prediction","who will win today","aaj kaun jeetega","pre match","before match"]):
+                speak("Analyzing today's match prediction sir...")
+                speak(get_match_prediction())
+
+            # VENUE HISTORY
+            elif any(w in cmd for w in ["venue history","ground history","venue record","ground record","past matches here"]):
+                speak("Checking venue history sir...")
+                speak(get_venue_history())
+
+            # PARTNERSHIP UPDATE
+            elif any(w in cmd for w in ["partnership","batting pair","stand","current pair","kaun batting"]):
+                speak("Checking partnership update sir...")
+                speak(get_partnerships())
+
+            # OVER UPDATE
+            elif any(w in cmd for w in ["last over","over update","over mein","over summary","over report","this over"]):
+                speak("Getting over update sir...")
+                speak(get_over_summary())
+
+            # IPL RECORDS
+            elif any(w in cmd for w in ["records","ipl record","highest score","most sixes","fastest","century record"]):
+                speak("Fetching IPL 2026 records sir...")
+                speak(get_ipl_records())
+
             elif any(w in cmd for w in ["help","kya kar sakta","features","commands","capabilities","what can you do"]):
-                speak("Sir, I am your IPL 2026 intelligence assistant. I can provide: Live score with match analysis. Run rate and required rate. Ball by ball commentary. Match schedule. Points table. Orange and purple cap. Pitch report. Weather. Injury updates. IPL news. Fantasy team suggestions. Player auction values. Team strength analysis. Win probability. Batting and bowling stats with intelligent insights. Player comparison. Momentum dashboard with win probability graph. Bowler versus batsman analysis.")
+                speak("Sir, I am your IPL 2026 intelligence assistant. I can provide: Live score with match analysis. Match situation broadcast. Over update. Partnership. Run rate. Commentary. Match schedule. Points table. Orange and purple cap. Pitch report. Venue history. Weather. Injury updates. IPL news. Fantasy team. Auction price. Team strength. Win probability. Match prediction. Player form guide. Stats with insights. Comparison. Momentum dashboard. Batting and bowling graphs. Head to head. IPL records.")
 
             # EXIT
             elif any(w in cmd for w in ["exit","stop","bye","goodbye","band karo","shutdown","shut down","close"]):
@@ -2075,25 +2327,7 @@ if __name__ == "__main__":
     speaker = win32com.client.Dispatch("SAPI.SpVoice")
 
     print("=" * 70)
-    print("  JARVIS IPL INTELLIGENCE AGENT v9.0 - REAL AGENT")
-    print("=" * 70)
-    print("  LIVE    | score | full score | run rate | commentary | analysis")
-    print("  MATCH   | today match | toss | playing 11 | pitch | weather")
-    print("  INTEL   | news | injury | fantasy | orange cap | purple cap")
-    print("  STATS   | Virat stats | Bumrah bowling | compare Virat and Rohit")
-    print("  VALUE   | Virat auction price | MI squad analysis")
-    print("  PREDICT | predict | win probability | Virat next score")
-    print("  GRAPHS  | momentum | Virat batting graph | Bumrah bowling graph")
-    print("  H2H     | MI vs CSK head to head | Virat ko kaun out kar sakta")
-    print("  TABLE   | points table | next match | last match | schedule")
-    print("  AUTO    | Wicket | Milestone | Partnership | RR alerts running")
-    print("=" * 70)
-    print()
-    print("  NEW: Every answer includes INTELLIGENT ANALYSIS + INSIGHTS")
-    print("  NEW: Score is ALWAYS FRESH - no stale cache")
-    print("  NEW: Venue-specific pitch reports (Wankhede, Eden, Chinnaswamy...)")
-    print("=" * 70)
-    print()
+    print("  JARVIS IPL INTELLIGENCE AGENT v10.1 REAL AGENT PRO")
 
     vt = threading.Thread(target=jarvis_loop, args=(speaker,), daemon=True)
     vt.start()

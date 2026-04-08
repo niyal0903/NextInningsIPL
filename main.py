@@ -2559,1036 +2559,1123 @@
 #         except Exception as e:
 #             print(f"[Graph] {e}")
 
-"""
-╔══════════════════════════════════════════════════════════════════════════╗
-║         JARVIS - REAL IPL 2026 INTELLIGENCE AGENT v13.0                ║
-║                                                                          ║
-║  ENGINE:   ML Brain (LinearRegression) + Local LLM (Ollama/Mistral)    ║
-║  DATA:     DDGS Live Search - Fresh every query                         ║
-║  GRAPHS:   Batting | Bowling | Momentum Dashboard (ML-powered)          ║
-╚══════════════════════════════════════════════════════════════════════════╝
+# """
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║         JARVIS - REAL IPL 2026 INTELLIGENCE AGENT v13.0                ║
+# ║                                                                          ║
+# ║  ENGINE:   ML Brain (LinearRegression) + Local LLM (Ollama/Mistral)    ║
+# ║  DATA:     DDGS Live Search - Fresh every query                         ║
+# ║  GRAPHS:   Batting | Bowling | Momentum Dashboard (ML-powered)          ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
-INSTALL:
-    pip install duckduckgo-search speechrecognition pywin32 pyaudio
-    pip install matplotlib numpy scikit-learn ollama
+# INSTALL:
+#     pip install duckduckgo-search speechrecognition pywin32 pyaudio
+#     pip install matplotlib numpy scikit-learn ollama
 
-OLLAMA SETUP (for LLM features):
-    1. Download: https://ollama.com
-    2. Run: ollama pull mistral
-    3. Start: ollama serve
-    (Jarvis works without Ollama too — uses rule-based fallback)
+# OLLAMA SETUP (for LLM features):
+#     1. Download: https://ollama.com
+#     2. Run: ollama pull mistral
+#     3. Start: ollama serve
+#     (Jarvis works without Ollama too — uses rule-based fallback)
 
-RUN:
-    python main.py
-"""
+# RUN:
+#     python main.py
+# """
 
-import re, time, os, threading, queue
-import pythoncom, win32com.client
+# import re, time, os, threading, queue
+# import pythoncom, win32com.client
+# import speech_recognition as sr
+# import numpy as np
+
+# # ── Project modules ────────────────────────────────────────────────
+# from ml_brain   import (predict_future_score, predict_future_wickets,
+#                          calculate_win_probability, extract_scores_from_text,
+#                          extract_wickets_from_text)
+# from llm_expert import (get_expert_analysis, get_match_insight,
+#                           get_fantasy_insight, get_h2h_insight,
+#                           get_pitch_insight, get_toss_insight,
+#                           check_llm_status)
+# from scraper    import (search, all_text, best_sentences, is_junk, clean,
+#                          get_live_scorecard, get_today_match, get_schedule,
+#                          get_points_table, get_orange_cap, get_purple_cap,
+#                          get_player_raw_data, get_toss, get_playing11,
+#                          get_injury_news, get_ipl_news)
+# from graphs     import (draw_batting_graph, draw_bowling_graph,
+#                           draw_momentum_dashboard)
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  GLOBAL STATE
+# # ══════════════════════════════════════════════════════════════════════
+# PLAYER_CACHE    = {}
+# GRAPH_QUEUE     = queue.Queue()
+# tracking_active = True
+# last_score      = {"wickets": -1, "runs": 0, "overs": 0.0, "rr": 0.0, "partnership": 0}
+
+# MATCH_STATE = {
+#     "team1": "", "team2": "", "runs": 0, "wickets": 0, "overs": 0.0,
+#     "target": 0, "run_history": [], "rr_history": [], "wicket_overs": [],
+# }
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  IPL PLAYER & TEAM MAPS
+# # ══════════════════════════════════════════════════════════════════════
+# IPL_PLAYERS = {
+#     "rohit":"Rohit Sharma","hardik":"Hardik Pandya","pandya":"Hardik Pandya",
+#     "bumrah":"Jasprit Bumrah","jasprit":"Jasprit Bumrah",
+#     "suryakumar":"Suryakumar Yadav","sky":"Suryakumar Yadav",
+#     "tilak":"Tilak Varma","varma":"Tilak Varma","boult":"Trent Boult",
+#     "dhoni":"MS Dhoni","msd":"MS Dhoni","ms":"MS Dhoni",
+#     "ruturaj":"Ruturaj Gaikwad","gaikwad":"Ruturaj Gaikwad",
+#     "jadeja":"Ravindra Jadeja","deepak":"Deepak Chahar","chahar":"Deepak Chahar",
+#     "shivam":"Shivam Dube","dube":"Shivam Dube","pathirana":"Matheesha Pathirana",
+#     "virat":"Virat Kohli","kohli":"Virat Kohli","vk":"Virat Kohli",
+#     "rajat":"Rajat Patidar","patidar":"Rajat Patidar",
+#     "cameron":"Cameron Green","green":"Cameron Green",
+#     "phil":"Phil Salt","salt":"Phil Salt","krunal":"Krunal Pandya",
+#     "shreyas":"Shreyas Iyer","iyer":"Shreyas Iyer",
+#     "venkatesh":"Venkatesh Iyer","narine":"Sunil Narine","sunil":"Sunil Narine",
+#     "russell":"Andre Russell","andre":"Andre Russell","rinku":"Rinku Singh",
+#     "varun":"Varun Chakravarthy","starc":"Mitchell Starc",
+#     "angkrish":"Angkrish Raghuvanshi","rishabh":"Rishabh Pant","pant":"Rishabh Pant",
+#     "jake":"Jake Fraser-McGurk","kuldeep":"Kuldeep Yadav","axar":"Axar Patel",
+#     "mukesh":"Mukesh Kumar","stubbs":"Tristan Stubbs","karun":"Karun Nair",
+#     "shashank":"Shashank Singh","prabhsimran":"Prabhsimran Singh",
+#     "arshdeep":"Arshdeep Singh","rossouw":"Rilee Rossouw","maxwell":"Glenn Maxwell",
+#     "sanju":"Sanju Samson","samson":"Sanju Samson",
+#     "yashasvi":"Yashasvi Jaiswal","jaiswal":"Yashasvi Jaiswal",
+#     "riyan":"Riyan Parag","parag":"Riyan Parag","jurel":"Dhruv Jurel",
+#     "hetmyer":"Shimron Hetmyer","archer":"Jofra Archer",
+#     "klaasen":"Heinrich Klaasen","heinrich":"Heinrich Klaasen",
+#     "abhishek":"Abhishek Sharma","travis":"Travis Head","head":"Travis Head",
+#     "cummins":"Pat Cummins","harshal":"Harshal Patel","shahbaz":"Shahbaz Ahmed",
+#     "kl":"KL Rahul","rahul":"KL Rahul","nicholas":"Nicholas Pooran","pooran":"Nicholas Pooran",
+#     "ravi":"Ravi Bishnoi","bishnoi":"Ravi Bishnoi","mohsin":"Mohsin Khan",
+#     "miller":"David Miller","david":"David Miller",
+#     "shubman":"Shubman Gill","gill":"Shubman Gill",
+#     "sai":"Sai Sudharsan","sudharsan":"Sai Sudharsan",
+#     "buttler":"Jos Buttler","jos":"Jos Buttler","rashid":"Rashid Khan",
+#     "siraj":"Mohammed Siraj","mohammed":"Mohammed Siraj",
+#     "umesh":"Umesh Yadav","rabada":"Kagiso Rabada","kagiso":"Kagiso Rabada",
+#     "prasidh":"Prasidh Krishna","krishna":"Prasidh Krishna",
+#     "prince":"Prince Yadav","ishan":"Ishan Kishan","kishan":"Ishan Kishan",
+#     "sameer":"Sameer Rizvi","rizvi":"Sameer Rizvi",
+#     "unadkat":"Jaydev Unadkat","jaydev":"Jaydev Unadkat",
+# }
+
+# IPL_TEAMS = {
+#     "mumbai":"Mumbai Indians","mi":"Mumbai Indians",
+#     "chennai":"Chennai Super Kings","csk":"Chennai Super Kings",
+#     "rcb":"Royal Challengers Bengaluru","bangalore":"Royal Challengers Bengaluru",
+#     "bengaluru":"Royal Challengers Bengaluru",
+#     "kkr":"Kolkata Knight Riders","kolkata":"Kolkata Knight Riders",
+#     "delhi":"Delhi Capitals","dc":"Delhi Capitals",
+#     "punjab":"Punjab Kings","pbks":"Punjab Kings",
+#     "rajasthan":"Rajasthan Royals","rr":"Rajasthan Royals",
+#     "hyderabad":"Sunrisers Hyderabad","srh":"Sunrisers Hyderabad",
+#     "sunrisers":"Sunrisers Hyderabad",
+#     "lucknow":"Lucknow Super Giants","lsg":"Lucknow Super Giants",
+#     "gujarat":"Gujarat Titans","gt":"Gujarat Titans",
+# }
+
+# VENUE_DB = {
+#     "wankhede":      "High-scoring. Fast outfield. Average 185+. Dew heavily affects second innings.",
+#     "eden gardens":  "Spin-friendly. Slower surface. Average 165. Home advantage for KKR.",
+#     "chinnaswamy":   "Highest scoring IPL venue. Thin air. Average 190+. Batsmen's paradise.",
+#     "chepauk":       "Spin-friendly. Low bounce. Average 155-165. Batsmen struggle early.",
+#     "narendra modi": "Flat pitch. Largest ground. Average 170-180. Scores slightly lower.",
+#     "arun jaitley":  "Batting-friendly. Some swing early. Dew factor at night.",
+#     "rajiv gandhi":  "Good batting track. Scores tend to be high. Pace gets movement initially.",
+#     "sawai mansingh":"Dry surface. Good for leg spinners. Average 165.",
+#     "ekana":         "Balanced pitch. LSG home advantage. Average 165-175.",
+# }
+
+# def find_player(cmd: str) -> str | None:
+#     cmd = cmd.lower()
+#     for k, v in IPL_PLAYERS.items():
+#         if k in cmd: return v
+#     return None
+
+# def find_teams(cmd: str) -> list:
+#     cmd, found = cmd.lower(), []
+#     for k, v in IPL_TEAMS.items():
+#         if k in cmd and v not in found: found.append(v)
+#     return found
+
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  INTELLIGENT ANALYSIS
+# # ══════════════════════════════════════════════════════════════════════
+# def analyze_situation(runs, wickets, overs, target=0) -> str:
+#     """Pure logic analysis — no search, no duplicates."""
+#     balls_done = int(overs) * 6 + round((overs % 1) * 10)
+#     balls_left = max(1, 120 - balls_done)
+#     curr_rr    = round(runs / overs, 2) if overs > 0 else 0
+#     insights   = []
+
+#     if target > 0:
+#         runs_needed = max(1, target - runs)
+#         req_rr      = round(runs_needed / balls_left * 6, 2)
+#         gap         = curr_rr - req_rr
+#         if gap > 1:
+#             insights.append("Batting team comfortably ahead of required rate.")
+#         elif gap > -1:
+#             insights.append(f"Close contest. Required rate {req_rr} vs current {curr_rr}.")
+#         elif gap > -3:
+#             insights.append(f"Tough chase. Required rate {req_rr} well above current {curr_rr}.")
+#         else:
+#             insights.append(f"Very difficult. Need {runs_needed} from {balls_left} balls at {req_rr}.")
+#         if wickets >= 7:
+#             insights.append("Tail exposed. Every run precious.")
+#         elif wickets <= 2 and balls_left > 30:
+#             insights.append("Plenty of wickets in hand to accelerate.")
+#     else:
+#         remaining  = max(1, 20 - overs)
+#         wkt_factor = max(0.55, 1 - wickets * 0.06)
+#         proj       = int(round(runs + curr_rr * remaining * wkt_factor))
+#         if overs < 6:
+#             insights.append(f"Powerplay. Projected total {proj} if form holds.")
+#         elif overs < 15:
+#             if wickets <= 3:
+#                 insights.append(f"Solid platform. Projected {proj}. Wickets in hand to push.")
+#             elif wickets <= 5:
+#                 insights.append(f"Middle overs squeeze. Projected {proj}. Partnership critical.")
+#             else:
+#                 insights.append(f"Wickets tumbling. Projected {proj}. Must rebuild urgently.")
+#         else:
+#             insights.append(f"Death overs. Final surge needed. Projected {proj}.")
+#     return ". ".join(insights)
+
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  PLAYER FULL ANALYSIS (ML + LLM)
+# # ══════════════════════════════════════════════════════════════════════
+# def get_full_player_analysis(player: str, bowling: bool = False) -> str:
+#     """The real agent experience — fresh data + ML + LLM."""
+#     print(f"  [Agent] Scanning IPL 2026 database for {player}...")
+
+#     raw = get_player_raw_data(player)
+
+#     if bowling:
+#         wickets   = raw.get("wickets", [])
+#         economies = raw.get("economies", [])
+
+#         if not wickets and raw.get("raw_text"):
+#             wickets, economies = extract_wickets_from_text(raw["raw_text"])
+
+#         if len(wickets) >= 3:
+#             ml = predict_future_wickets(wickets, economies)
+#             PLAYER_CACHE[player.lower()] = {"wickets": wickets, "economies": economies, "ml": ml}
+
+#             expert = get_expert_analysis(player, wickets, ml.get("predicted", 0), bowling=True)
+
+#             return (f"Sir, {player} IPL 2026 bowling analysis — "
+#                     f"Recent wickets: {wickets[:5]}. "
+#                     f"Average {ml['average']} per match. Economy {raw.get('economy','N/A')}. "
+#                     f"ML predicts {ml['predicted']} wickets next match (trend: {ml['trend']}, "
+#                     f"{ml['confidence']} confidence). "
+#                     f"Expert assessment: {expert}")
+#         else:
+#             sents = best_sentences(search(f"{player} IPL 2026 bowling stats", mode="text", n=5),
+#                                    ["wicket", "economy", "bowling", "figures"])
+#             base = f"Sir, {player} bowling: " + ". ".join(sents) if sents else f"Sir, {player} bowling data insufficient."
+#             expert = get_expert_analysis(player, [], 0, bowling=True)
+#             return base + f" Expert note: {expert}"
+#     else:
+#         scores = raw.get("scores", [])
+
+#         if not scores and raw.get("raw_text"):
+#             scores = extract_scores_from_text(raw["raw_text"])
+
+#         if len(scores) >= 3:
+#             ml = predict_future_score(scores)
+#             PLAYER_CACHE[player.lower()] = {"runs": scores, "ml": ml}
+
+#             expert = get_expert_analysis(player, scores, ml.get("predicted", 0))
+
+#             career = (f"Career: {raw['career_runs']} runs in {raw['career_matches']} matches. "
+#                       if raw.get("career_runs") else "")
+
+#             return (f"Sir, {player} IPL 2026 batting analysis — "
+#                     f"{career}"
+#                     f"Recent innings: {scores[:6]}. "
+#                     f"Current average {ml['average']}. Strike rate {raw.get('strike_rate','N/A')}. "
+#                     f"Peak {ml['peak']}, Floor {ml['floor']}. "
+#                     f"ML predicts {ml['predicted']} runs next match "
+#                     f"(trend: {ml['trend']}, {ml['confidence']} confidence). "
+#                     f"Expert assessment: {expert}")
+#         else:
+#             sents = best_sentences(search(f"{player} IPL 2026 batting stats runs", mode="text", n=5),
+#                                    ["run", "score", "average", "strike", "innings"])
+#             base = f"Sir, {player}: " + ". ".join(sents) if sents else f"Sir, {player} batting data insufficient."
+#             expert = get_expert_analysis(player, [], 0)
+#             return base + f" Expert note: {expert}"
+
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  FULL MATCH SITUATION
+# # ══════════════════════════════════════════════════════════════════════
+# def get_full_match_situation() -> str:
+#     d     = get_live_scorecard()
+#     match = get_today_match()
+
+#     if not d and not match:
+#         return "Sir, no live match data available right now."
+#     if not d:
+#         return f"Sir, today's match is {match}. Live score not yet available."
+
+#     runs    = d.get("runs", 0)
+#     wickets = d.get("wickets", 0)
+#     overs   = d.get("overs", 0.0)
+#     rr      = d.get("run_rate", 0.0)
+#     target  = d.get("target", 0)
+#     req_rr  = d.get("req_rate", 0.0)
+#     needed  = d.get("runs_needed", 0) or max(0, target - runs)
+#     balls   = d.get("balls_left", 0)
+#     part    = d.get("partnership", 0)
+#     t1      = d.get("team1", MATCH_STATE.get("team1", "")) or "batting team"
+
+#     # Win probability
+#     wp = calculate_win_probability(runs, wickets, overs, target)
+
+#     if target:
+#         msg = (f"Sir, {t1} chasing {target}. "
+#                f"Score: {runs} for {wickets} in {overs} overs. "
+#                f"Need {needed} runs")
+#         if balls: msg += f" from {balls} balls"
+#         msg += f". Run rate {rr}"
+#         if req_rr: msg += f", required {req_rr}"
+#         msg += f". Win probability {wp.get('win_percent')}%."
+#         if part: msg += f" Partnership {part}."
+#     else:
+#         proj = wp.get("projected", int(rr * 20) if rr else 0)
+#         msg  = (f"Sir, {t1}: {runs} for {wickets} in {overs} overs. "
+#                 f"Run rate {rr}. Projected {proj}.")
+#         if part: msg += f" Partnership {part}."
+
+#     # LLM insight
+#     score_data = {**d, "win_percent": wp.get("win_percent", 50)}
+#     insight    = get_match_insight(match or "IPL 2026", score_data)
+#     if insight:
+#         msg += f" {insight}"
+#     else:
+#         msg += f" {analyze_situation(runs, wickets, overs, target)}"
+
+#     # Update MATCH_STATE
+#     MATCH_STATE.update(
+#         runs=runs, wickets=wickets, overs=overs, target=target,
+#         team1=d.get("team1", MATCH_STATE["team1"]),
+#         team2=d.get("team2", MATCH_STATE["team2"]),
+#     )
+#     rh = MATCH_STATE["run_history"]
+#     if not rh or rh[-1] != runs:
+#         rh.append(runs)
+#         if rr: MATCH_STATE["rr_history"].append(rr)
+
+#     return msg.strip()
+
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  FANTASY TEAM
+# # ══════════════════════════════════════════════════════════════════════
+# def get_fantasy_team() -> str:
+#     match = get_today_match()
+#     if not match: return "Sir, today's match not found."
+#     res   = search(f"{match} IPL 2026 fantasy team best XI captain picks today", mode="text", n=8)
+#     sents = best_sentences(res, ["captain", "must pick", "differential", "fantasy", "key pick", "vice"])
+#     players_found = []
+#     txt = all_text(res)
+#     for k, v in IPL_PLAYERS.items():
+#         if k in txt.lower() and v not in players_found: players_found.append(v)
+#         if len(players_found) >= 8: break
+#     insight = get_fantasy_insight(match, players_found)
+#     if sents:
+#         return f"Sir, fantasy for {match}: " + ". ".join(sents[:2]) + f" {insight}"
+#     return insight
+
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  PITCH + WEATHER
+# # ══════════════════════════════════════════════════════════════════════
+# def get_pitch_report() -> str:
+#     from scraper import TEAM_VENUE, TEAM_CITY
+#     match   = get_today_match() or "IPL 2026"
+#     match_l = match.lower()
+
+#     # 1. Team-based venue lookup (most reliable)
+#     venue = None
+#     for team_key, team_venue in TEAM_VENUE.items():
+#         if team_key.lower().split()[-1].lower() in match_l or team_key.lower().split()[0].lower() in match_l:
+#             venue = team_venue
+#             break
+
+#     # 2. Try venue DB
+#     for key, info in VENUE_DB.items():
+#         if key in match_l or (venue and key in venue.lower()):
+#             llm_add = get_pitch_insight(venue or key, info)
+#             return f"Sir, {venue or key} pitch: {info} {llm_add}"
+
+#     # 3. Search for pitch info
+#     res = search(f"{match} IPL 2026 pitch report surface today venue", mode="news", days="d", n=8)
+#     txt = all_text(res)
+
+#     # Check venue DB against search text too
+#     for key, info in VENUE_DB.items():
+#         if key in txt.lower():
+#             return f"Sir, {key.title()} pitch: {info}"
+
+#     sents = best_sentences(res, ["pitch","surface","batting","spin","pace","bounce","flat","dew"])
+#     if sents:
+#         llm_add = get_pitch_insight(venue or match, " ".join(sents))
+#         return "Sir, pitch report: " + ". ".join(sents[:2]) + f" {llm_add}"
+#     return f"Sir, {match} pitch: Expected good batting surface. Spinners may assist in later overs."
+
+# def get_weather() -> str:
+#     from scraper import TEAM_CITY
+#     match = get_today_match() or "IPL 2026"
+
+#     # 1. Try from match title - team-based city lookup
+#     city = None
+#     match_l = match.lower()
+#     for team_key, team_city in TEAM_CITY.items():
+#         if team_key in match_l:
+#             city = team_city
+#             break
+
+#     # 2. Fallback: search for city
+#     if not city:
+#         cities = ["Mumbai","Chennai","Kolkata","Delhi","Bengaluru","Bangalore",
+#                   "Hyderabad","Ahmedabad","Jaipur","Lucknow","Mohali","Pune","Dharamsala","Guwahati"]
+#         vtxt   = all_text(search(f"{match} IPL 2026 venue city today", mode="news", days="d", n=5))
+#         city   = next((c for c in cities if c.lower() in vtxt.lower()), "Mumbai")
+
+#     res   = search(f"{city} weather today cricket match IPL 2026 rain dew temperature", mode="news", days="d", n=6)
+#     sents = best_sentences(res, ["weather","rain","temperature","dew","humid","clear","forecast","cloud"])
+#     # Filter: must mention today's city
+#     valid = [s for s in sents if city.lower() in s.lower() or "today" in s.lower() or "match" in s.lower()]
+#     if valid:
+#         return f"Sir, {city} weather: " + ". ".join(valid[:2])
+#     if sents:
+#         return f"Sir, {city} weather: " + sents[0]
+#     return f"Sir, {city}: Clear skies expected. Dew factor likely in second innings. Humidity moderate."
+
+# def get_toss_analysis() -> str:
+#     toss = get_toss()
+#     if not toss: return "Sir, toss not announced yet."
+#     pitch   = get_pitch_report()
+#     weather = get_weather()
+#     return get_toss_insight(toss, pitch, weather)
+
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  H2H + BOWLERS AGAINST
+# # ══════════════════════════════════════════════════════════════════════
+# def get_h2h(t1: str, t2: str) -> str:
+#     res    = search(f"{t1} vs {t2} IPL head to head record wins history", mode="text", n=6)
+#     sents  = best_sentences(res, ["won", "win", "head", "record", "beat", "times"])
+#     h2h_str = ". ".join(sents[:2]) if sents else "limited head to head data"
+#     return get_h2h_insight(t1, t2, h2h_str)
+
+# def get_bowlers_against(batsman: str) -> str:
+#     first = batsman.split()[0]
+#     res   = search(f"bowler dismissed {batsman} most times IPL history", mode="text", n=8)
+#     txt   = all_text(res)
+#     bowlers = []
+#     for bname in re.findall(r'([A-Z][a-z]+\s+[A-Z][a-z]+)\s+(?:has|have|holds|is)', txt):
+#         if bname.lower() not in batsman.lower() and len(bname) > 5: bowlers.append(bname)
+#     sents  = best_sentences(res, ["dismiss", "wicket", "out", "bowler"])
+#     result = ""
+#     if bowlers:
+#         uniq   = list(dict.fromkeys(bowlers))[:3]
+#         result += f"Sir, {batsman} ka kryptonite: {', '.join(uniq)}. "
+#     if sents:
+#         result += ". ".join(sents[:2])
+#     if result:
+#         expert = get_expert_analysis(batsman, [], 0)
+#         return result + f" Expert note: {expert}"
+#     return f"Sir, {batsman} ke against bowler matchup data nahi mila."
+
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  MISC FEATURES
+# # ══════════════════════════════════════════════════════════════════════
+# def get_player_form(player: str) -> str:
+#     raw    = get_player_raw_data(player)
+#     scores = raw.get("scores", [])[:5]
+#     if len(scores) >= 3:
+#         ml     = predict_future_score(scores)
+#         expert = get_expert_analysis(player, scores, ml.get("predicted", 0))
+#         return (f"Sir, {player} recent form: Last {len(scores)} innings {scores}. "
+#                 f"Average {ml['average']}. Trend {ml['trend']}. "
+#                 f"ML predicts {ml['predicted']} next match. {expert}")
+#     # Fallback: news search (cleaner than text)
+#     sents = best_sentences(
+#         search(f"{player} IPL 2026 form recent innings runs match", mode="news", days="w", n=8),
+#         ["form","performing","innings","run","consistent","scored","hit"])
+#     return ("Sir, " + player + " form: " + ". ".join(sents[:2]) if sents
+#             else f"Sir, {player} ka recent form data nahi mila.")
+
+# def get_ipl_records() -> str:
+#     res   = search("IPL 2026 records highest score most sixes fastest fifty century", mode="text", n=6)
+#     sents = best_sentences(res, ["record","highest","most","fastest","century","six","fifty"])
+#     return ("Sir, IPL 2026 records: " + ". ".join(sents[:3])
+#             if sents else "Sir, IPL 2026 records not available.")
+
+# def get_auction_value(player: str) -> str:
+#     res  = search(f"{player} IPL 2026 auction price crore salary bid", mode="text", n=6)
+#     txt  = all_text(res)
+#     m    = re.search(r'(\d+(?:\.\d+)?)\s*(?:crore|cr)\b', txt, re.IGNORECASE)
+#     if m:
+#         return f"Sir, {player} IPL auction value: {m.group(1)} crore."
+#     sents = best_sentences(res, ["crore","auction","price","sold","bid"])
+#     return f"Sir, {sents[0]}" if sents else f"Sir, {player} auction data not found."
+
+# def get_team_strength(team: str) -> str:
+#     res   = search(f"{team} IPL 2026 squad analysis strength weakness", mode="text", n=6)
+#     t0    = team.split()[0].lower()
+#     parts = []
+#     for r in res:
+#         for line in re.split(r'[.\n]', r.get("body", "")):
+#             line = line.strip()
+#             if is_junk(line) or not (20 < len(line) < 200): continue
+#             if t0 in line.lower():
+#                 if any(w in line.lower() for w in ["strong","weak","key","squad","batting","bowling","form","balance"]):
+#                     cl = clean(line)
+#                     if cl and cl not in parts: parts.append(cl)
+#             if len(parts) >= 3: break
+#         if len(parts) >= 3: break
+#     if parts:
+#         return f"Sir, {team}: " + ". ".join(parts[:3])
+#     return f"Sir, {team}: Balanced squad. Check injury news before finalizing picks."
+
+# def get_player_milestone(player: str) -> str:
+#     res   = search(f"{player} IPL 2026 milestone record close runs wickets", mode="text", n=6)
+#     sents = best_sentences(res, ["milestone","record","close","away","needs","require","century"])
+#     return ("Sir, " + ". ".join(sents[:2]) if sents
+#             else f"Sir, {player} milestone data not found. Check career stats.")
+
+# def get_batting_scorecard() -> str:
+#     match  = get_today_match() or "IPL 2026"
+#     res    = search(f"{match} IPL 2026 live batting at crease runs balls today", mode="news", days="d", n=8)
+#     sents  = best_sentences(res, ["batting","batsman","runs off","not out","at crease","opening"])
+#     kw     = match.split(" vs ")[0].split()[-1].lower() if " vs " in match else "ipl"
+#     valid  = [s for s in sents if kw in s.lower() or "batting" in s.lower()]
+#     if valid: return "Sir, batting update: " + ". ".join(valid[:2])
+#     d = get_live_scorecard()
+#     return (f"Sir, batting: {d.get('runs')}/{d.get('wickets')} in {d.get('overs')} overs."
+#             if d else "Sir, batting scorecard not in live feed.")
+
+# def get_bowling_scorecard() -> str:
+#     match  = get_today_match() or "IPL 2026"
+#     res    = search(f"{match} IPL 2026 live bowling figures economy today", mode="news", days="d", n=8)
+#     sents  = best_sentences(res, ["bowling","bowler","figures","economy","spell","wickets"])
+#     kw     = match.split(" vs ")[0].split()[-1].lower() if " vs " in match else "ipl"
+#     valid  = [s for s in sents if kw in s.lower() or "bowl" in s.lower()]
+#     return ("Sir, bowling update: " + ". ".join(valid[:2]) if valid
+#             else "Sir, bowling scorecard not in live feed right now.")
+
+
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  NEW: LIVE OVER-BY-OVER TRACKER
+# # ══════════════════════════════════════════════════════════════════════
+# def get_over_by_over() -> str:
+#     match = get_today_match() or "IPL 2026"
+#     res   = search(f"{match} IPL 2026 live over by over update runs wickets", mode="news", days="d", n=8)
+#     sents = best_sentences(res, ["over","wicket","boundary","six","four","dot","last over","this over","maiden"])
+#     kw    = match.replace(" vs "," ").split()[0].lower() if match else "ipl"
+#     valid = [s for s in sents if kw in s.lower() or "over" in s.lower()]
+#     if valid: return "Sir, over-by-over: " + ". ".join(valid[:3])
+#     d = get_live_scorecard()
+#     if d: return f"Sir, {d.get('runs')}/{d.get('wickets')} in {d.get('overs')} overs. Run rate {d.get('run_rate')}."
+#     return "Sir, over tracker not available right now."
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  NEW: MATCH MOMENTUM (did batting team gain or lose momentum?)
+# # ══════════════════════════════════════════════════════════════════════
+# def get_match_momentum() -> str:
+#     d = get_live_scorecard()
+#     if not d or not d.get("runs"): return "Sir, no live match data."
+#     rh = MATCH_STATE.get("run_history", [])
+#     if len(rh) >= 3:
+#         recent_rrs = []
+#         for i in range(max(0,len(rh)-3), len(rh)):
+#             if i > 0 and rh[i] > rh[i-1]:
+#                 recent_rrs.append(rh[i] - rh[i-1])
+#         if recent_rrs:
+#             avg_recent = sum(recent_rrs) / len(recent_rrs)
+#             overall_rr = d.get("run_rate", 0)
+#             if avg_recent > overall_rr + 1:
+#                 momentum = "batting team has momentum. Run rate picking up."
+#             elif avg_recent < overall_rr - 1:
+#                 momentum = "bowling team has momentum. Batting team slowing down."
+#             else:
+#                 momentum = "match is evenly poised. No team has clear momentum."
+#             return f"Sir, current momentum: {momentum} Last few overs averaging {round(avg_recent,1)} per over."
+#     return get_full_match_situation()
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  NEW: TOP 5 PERFORMERS TODAY
+# # ══════════════════════════════════════════════════════════════════════
+# def get_top_performers() -> str:
+#     match = get_today_match() or "IPL 2026"
+#     res   = search(f"{match} IPL 2026 top performers today runs wickets standout", mode="news", days="d", n=8)
+#     sents = best_sentences(res, ["scored","took","wicket","century","fifty","hit","smashed","bowling spell"])
+#     kw    = match.replace(" vs "," ").split()[0].lower() if match else "ipl"
+#     valid = [s for s in sents if kw in s.lower() or any(w in s.lower() for w in ["scored","wicket","took","hit"])]
+#     if valid: return "Sir, top performers today: " + ". ".join(valid[:4])
+#     return "Sir, top performers data not in live feed yet."
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  NEW: SMART MATCH SUMMARY (end of innings/match)
+# # ══════════════════════════════════════════════════════════════════════
+# def get_match_summary() -> str:
+#     match = get_today_match() or "IPL 2026"
+#     res   = search(f"{match} IPL 2026 match summary innings result highlights today", mode="news", days="d", n=8)
+#     sents = best_sentences(res, ["innings","result","won","beat","total","scored","chased","defended"])
+#     kw    = match.replace(" vs "," ").split()[0].lower() if match else "ipl"
+#     valid = [s for s in sents if kw in s.lower() or any(w in s.lower() for w in ["won","total","innings","result"])]
+#     if valid: return "Sir, match summary: " + ". ".join(valid[:3])
+#     d = get_live_scorecard()
+#     if d: return get_full_match_situation()
+#     return "Sir, match summary not available yet."
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  NEW: PLAYER VS PLAYER HEAD TO HEAD (batsman vs bowler)
+# # ══════════════════════════════════════════════════════════════════════
+# def get_player_vs_player(batter: str, bowler: str) -> str:
+#     res   = search(f"{batter} vs {bowler} IPL T20 record dismissals stats matchup", mode="text", n=6)
+#     sents = best_sentences(res, ["dismiss","wicket","out","balls","runs","average","face","times"])
+#     if sents:
+#         expert = get_expert_analysis(f"{batter} vs {bowler}", [], 0)
+#         return f"Sir, {batter} vs {bowler}: " + ". ".join(sents[:2]) + f" {expert}"
+#     return f"Sir, {batter} vs {bowler} specific record not found. Check bowler analysis for broader data."
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  SENTINEL - background alerts
+# # ══════════════════════════════════════════════════════════════════════
+# def sentinel(speaker):
+#     global last_score
+#     pythoncom.CoInitialize()
+#     while tracking_active:
+#         try:
+#             d = get_live_scorecard()
+#             if d:
+#                 runs    = d.get("runs", 0)
+#                 wickets = d.get("wickets", 0)
+#                 overs   = d.get("overs", 0.0)
+#                 rr      = d.get("run_rate", 0.0)
+#                 part    = d.get("partnership", 0)
+
+#                 if wickets > last_score['wickets'] >= 0:
+#                     ov_str = f"in {overs} overs" if overs > 0 else ""
+#                     msg    = f"Sir, wicket has fallen. Score {runs} for {wickets} {ov_str}."
+#                     msg   += f" {analyze_situation(runs, wickets, overs, d.get('target', 0))}"
+#                     print(f"\n*** WICKET ALERT: {msg}")
+#                     speaker.Speak(msg)
+#                     if wickets not in MATCH_STATE["wicket_overs"]:
+#                         MATCH_STATE["wicket_overs"].append(int(overs))
+
+#                 if last_score['runs'] > 0:
+#                     if runs // 50 > last_score['runs'] // 50:
+#                         speaker.Speak(f"Sir, batting team crossed {(runs // 50) * 50} runs.")
+#                     if part >= 100 and last_score.get("partnership", 0) < 100:
+#                         speaker.Speak("Sir, century partnership. Outstanding batting.")
+#                     if rr > 12 and last_score.get("rr", 0) <= 12:
+#                         speaker.Speak(f"Sir, exceptional run rate {rr} right now.")
+
+#                 last_score.update(runs=runs, wickets=wickets, overs=overs, rr=rr, partnership=part)
+#         except Exception as e:
+#             print(f"[Sentinel] {e}")
+#         time.sleep(60)
+
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  MAIN VOICE LOOP
+# # ══════════════════════════════════════════════════════════════════════
+# def jarvis_loop(speaker):
+#     pythoncom.CoInitialize()
+
+#     def speak(text: str):
+#         print(f"\nJarvis: {text}\n")
+#         speaker.Speak(text)
+
+#     def listen_once(timeout: int = 8) -> str:
+#         with sr.Microphone() as src:
+#             rec.adjust_for_ambient_noise(src, duration=0.3)
+#             audio = rec.listen(src, timeout=timeout, phrase_time_limit=8)
+#         return rec.recognize_google(audio, language="en-IN").strip()
+
+#     threading.Thread(target=sentinel, args=(speaker,), daemon=True).start()
+#     rec = sr.Recognizer()
+#     rec.dynamic_energy_threshold = True
+
+#     llm_st = check_llm_status()
+#     speak(f"Jarvis online, sir. IPL 2026 agent ready. {llm_st}. How can I assist you?")
+
+#     while True:
+#         try:
+#             with sr.Microphone() as src:
+#                 print("[Listening]")
+#                 rec.adjust_for_ambient_noise(src, duration=0.5)
+#                 audio = rec.listen(src, timeout=10, phrase_time_limit=10)
+#             print("[Recognizing]")
+#             cmd = rec.recognize_google(audio, language="en-IN").lower().strip()
+#             print(f"You said: '{cmd}'")
+
+#             # ── WAKE ──────────────────────────────────────────────
+#             if cmd.strip() in ["jarvis", "hey jarvis"]:
+#                 speak("Yes sir, ready.")
+
+#             # ── TODAY MATCH ───────────────────────────────────────
+#             elif any(w in cmd for w in ["today match","aaj ka match","kiska match",
+#                                          "kaun khel","ipl today","which match","aaj kaun"]):
+#                 speak("Checking today's match sir...")
+#                 ans = get_today_match()
+#                 speak(f"Sir, today's match: {ans}. Want the live score?" if ans
+#                       else "Sir, today's match not found.")
+
+#             # ── FULL SITUATION (ML + LLM) ─────────────────────────
+#             elif any(w in cmd for w in ["situation","match situation","full update","poori update",
+#                                          "full status","kya ho raha","complete update","what's happening"]):
+#                 speak("Analyzing match situation sir...")
+#                 speak(get_full_match_situation())
+
+#             # ── LIVE SCORE ────────────────────────────────────────
+#             elif any(w in cmd for w in ["score","kya hua","kitne run","live","status","update","kya score"]) and "highest" not in cmd:
+#                 speak("Fetching fresh score sir...")
+#                 d = get_live_scorecard()
+#                 if d:
+#                     msg = (f"Sir, {d.get('runs','?')} for {d.get('wickets','?')} "
+#                            f"in {d.get('overs','?')} overs. Run rate {d.get('run_rate','?')}.")
+#                     msg += f" {analyze_situation(d['runs'], d.get('wickets',0), d['overs'], d.get('target',0))}"
+#                     speak(msg)
+#                 else:
+#                     ans = get_today_match()
+#                     speak(f"Sir, live score not available. Today: {ans}." if ans
+#                           else "Sir, no live match right now.")
+
+#             # ── RUN RATE ──────────────────────────────────────────
+#             elif any(w in cmd for w in ["run rate","required rate","rrr","current rate","kitna rate","crr"]):
+#                 d = get_live_scorecard()
+#                 if d:
+#                     msg = f"Sir, current run rate {d.get('run_rate','?')}."
+#                     if d.get("req_rate"):   msg += f" Required {d['req_rate']}."
+#                     if d.get("balls_left"): msg += f" {d['balls_left']} balls left."
+#                     speak(msg)
+#                 else:
+#                     speak("Sir, no live match data.")
+
+#             # ── PLAYER ANALYSIS (ML + LLM) ────────────────────────
+#             elif any(w in cmd for w in ["analyze","analysis","deep analysis","full analysis",
+#                                          "ml analysis","expert analysis","poora analysis"]):
+#                 player = find_player(cmd)
+#                 if not player:
+#                     speak("Which player sir?")
+#                     try: player = find_player(listen_once()) or listen_once().strip().title()
+#                     except: continue
+#                 bowling = any(w in cmd for w in ["bowl","wicket","bowling"])
+#                 speak(f"Running ML and LLM analysis for {player} sir. One moment...")
+#                 speak(get_full_player_analysis(player, bowling=bowling))
+
+#             # ── PLAYER STATS ──────────────────────────────────────
+#             elif any(w in cmd for w in ["stats","performance","kaisa khelta","batting stats","runs banaye","innings"]):
+#                 player = find_player(cmd)
+#                 if not player:
+#                     speak("Which player sir?")
+#                     try: player = find_player(listen_once()) or listen_once().strip().title()
+#                     except: continue
+#                 speak(f"Fetching {player} stats sir...")
+#                 speak(get_full_player_analysis(player))
+
+#             # ── BOWLING STATS ─────────────────────────────────────
+#             elif any(w in cmd for w in ["bowling stats","bowling record","kitne wicket","bowling figures","economy"]):
+#                 player = find_player(cmd)
+#                 if not player:
+#                     speak("Which bowler sir?")
+#                     try: player = find_player(listen_once()) or listen_once().strip().title()
+#                     except: continue
+#                 speak(f"Fetching {player} bowling sir...")
+#                 speak(get_full_player_analysis(player, bowling=True))
+
+#             # ── PLAYER FORM ───────────────────────────────────────
+#             elif any(w in cmd for w in ["form","recent form","last 5","kaise chal raha","current form","in form"]):
+#                 player = find_player(cmd)
+#                 if not player:
+#                     speak("Which player sir?")
+#                     try: player = find_player(listen_once()) or listen_once().strip().title()
+#                     except: continue
+#                 speak(f"Analyzing {player} recent form sir...")
+#                 speak(get_player_form(player))
+
+#             # ── WIN PREDICTION ────────────────────────────────────
+#             elif any(w in cmd for w in ["predict","kaun jeetega","win","chance","jeetne","winner",
+#                                          "win probability","who will win","prediction"]):
+#                 d = get_live_scorecard()
+#                 if d and d.get("runs"):
+#                     wp  = calculate_win_probability(d['runs'], d.get('wickets',0),
+#                                                      d.get('overs',1), d.get('target',185))
+#                     msg = f"Sir, win probability: {wp.get('win_percent')}% for batting team. "
+#                     msg += analyze_situation(d['runs'], d.get('wickets',0),
+#                                               d.get('overs',1), d.get('target',0))
+#                     expert = get_match_insight(get_today_match() or "IPL 2026",
+#                                                {**d, "win_percent": wp.get("win_percent", 50)})
+#                     if expert: msg += f" {expert}"
+#                     speak(msg)
+#                 else:
+#                     speak("Which player sir? Batting or bowling?")
+#                     try:
+#                         pc = listen_once().lower()
+#                         pl = find_player(pc) or pc.strip().title()
+#                         if "bowl" in pc or "wicket" in pc:
+#                             r  = get_full_player_analysis(pl, bowling=True)
+#                         else:
+#                             r  = get_full_player_analysis(pl)
+#                         speak(r)
+#                     except:
+#                         speak("Sir, prediction needs live match data.")
+
+#             # ── SCHEDULE ──────────────────────────────────────────
+#             elif any(w in cmd for w in ["next match","agle match","tomorrow","kal ka","upcoming"]):
+#                 speak("Checking tomorrow's fixture sir...")
+#                 speak(get_schedule("tomorrow"))
+
+#             elif any(w in cmd for w in ["last match","yesterday","kal hua","pichle","previous match"]):
+#                 speak("Checking yesterday's result sir...")
+#                 speak(get_schedule("yesterday"))
+
+#             elif any(w in cmd for w in ["schedule","fixture","kab hai","aaj ka schedule"]):
+#                 speak("Checking today's schedule sir...")
+#                 speak(get_schedule("today"))
+
+#             # ── POINTS TABLE ──────────────────────────────────────
+#             elif any(w in cmd for w in ["points table","standings","ranking","kaun upar","table","leaderboard","playoff"]):
+#                 speak("Fetching IPL standings sir...")
+#                 speak(get_points_table())
+
+#             # ── ORANGE / PURPLE CAP ───────────────────────────────
+#             elif any(w in cmd for w in ["orange cap","top scorer","most runs","leading batsman"]):
+#                 speak("Checking orange cap sir...")
+#                 speak(get_orange_cap())
+
+#             elif any(w in cmd for w in ["purple cap","most wickets","leading bowler","top bowler"]):
+#                 speak("Checking purple cap sir...")
+#                 speak(get_purple_cap())
+
+#             # ── PITCH ─────────────────────────────────────────────
+#             elif any(w in cmd for w in ["pitch","pitch report","surface","ground report"]):
+#                 speak("Fetching pitch report sir...")
+#                 speak(get_pitch_report())
+
+#             # ── WEATHER ───────────────────────────────────────────
+#             elif any(w in cmd for w in ["weather","rain","mausam","barish","temperature","dew","forecast"]):
+#                 speak("Checking weather conditions sir...")
+#                 speak(get_weather())
+
+#             # ── TOSS ANALYSIS ─────────────────────────────────────
+#             elif any(w in cmd for w in ["toss","toss analysis","toss decision","why bat","why field"]):
+#                 speak("Analyzing toss sir...")
+#                 speak(get_toss_analysis())
+
+#             # ── PLAYING 11 ────────────────────────────────────────
+#             elif any(w in cmd for w in ["playing 11","playing eleven","squad","eleven","starting xi"]):
+#                 speak("Checking playing eleven sir...")
+#                 p11 = get_playing11()
+#                 speak(p11 if p11 else "Sir, playing eleven not announced yet.")
+
+#             # ── INJURY ────────────────────────────────────────────
+#             elif any(w in cmd for w in ["injury","injured","fit","fitness","ruled out","unavailable","kaun fit"]):
+#                 teams = find_teams(cmd)
+#                 speak("Checking injury updates sir...")
+#                 speak(get_injury_news(teams[0] if teams else None))
+
+#             # ── NEWS ──────────────────────────────────────────────
+#             elif any(w in cmd for w in ["news","latest","highlights","headlines","kya hua aaj","updates","breaking"]):
+#                 speak("Fetching latest IPL news sir...")
+#                 speak(get_ipl_news())
+
+#             # ── FANTASY ───────────────────────────────────────────
+#             elif any(w in cmd for w in ["fantasy","dream11","best 11","fantasy team","who to pick","best pick"]):
+#                 speak("Analyzing fantasy picks with LLM sir...")
+#                 speak(get_fantasy_team())
+
+#             # ── AUCTION VALUE ─────────────────────────────────────
+#             elif any(w in cmd for w in ["auction","price","value","crore","kitne mein","salary","worth"]):
+#                 player = find_player(cmd)
+#                 if not player:
+#                     speak("Which player sir?")
+#                     try: player = find_player(listen_once()) or listen_once().strip().title()
+#                     except: continue
+#                 speak(get_auction_value(player))
+
+#             # ── TEAM STRENGTH ─────────────────────────────────────
+#             elif any(w in cmd for w in ["team strength","squad analysis","team form","team analysis","kaisi team"]):
+#                 teams = find_teams(cmd)
+#                 if teams:
+#                     speak(f"Analyzing {teams[0]} sir...")
+#                     speak(get_team_strength(teams[0]))
+#                 else:
+#                     speak("Which team sir?")
+#                     try:
+#                         tc = listen_once()
+#                         t  = find_teams(tc)
+#                         speak(get_team_strength(t[0]) if t else "Team not found sir.")
+#                     except: continue
+
+#             # ── COMPARE ───────────────────────────────────────────
+#             elif any(w in cmd for w in ["compare","versus","better","mukabla","kaun behtar"]):
+#                 plist = []
+#                 for k, v in IPL_PLAYERS.items():
+#                     if k in cmd and v not in plist: plist.append(v)
+#                 if len(plist) >= 2:
+#                     p1, p2 = plist[0], plist[1]
+#                 else:
+#                     speak("Two players please sir, with 'and' in between.")
+#                     try:
+#                         said = listen_once()
+#                         if " and " in said.lower():
+#                             pts = said.lower().split(" and ")
+#                             p1  = find_player(pts[0]) or pts[0].strip().title()
+#                             p2  = find_player(pts[1]) or pts[1].strip().title()
+#                         else:
+#                             speak("Use 'and' between names sir."); continue
+#                     except: continue
+#                 speak(f"Comparing {p1} and {p2} sir...")
+#                 s1 = get_full_player_analysis(p1)
+#                 s2 = get_full_player_analysis(p2)
+#                 speak(f"{s1} Now for {p2}: {s2}")
+
+#             # ── HEAD TO HEAD ──────────────────────────────────────
+#             elif any(w in cmd for w in ["head to head","h2h","history between"]):
+#                 teams = find_teams(cmd)
+#                 if len(teams) >= 2:
+#                     speak(f"Checking {teams[0]} vs {teams[1]} with LLM analysis sir...")
+#                     speak(get_h2h(teams[0], teams[1]))
+#                 else:
+#                     speak("Sir, name two teams. Example: MI vs CSK head to head.")
+
+#             # ── BOWLERS AGAINST ───────────────────────────────────
+#             elif any(w in cmd for w in ["kaun out karega","weakness","kamzori","kaun out kar",
+#                                          "dismiss","out kar sakta","nemesis","bowler against"]):
+#                 player = find_player(cmd)
+#                 if not player:
+#                     speak("Which batsman sir?")
+#                     try: player = find_player(listen_once()) or listen_once().strip().title()
+#                     except: continue
+#                 speak(f"Analyzing threats against {player} sir...")
+#                 speak(get_bowlers_against(player))
+
+#             # ── MILESTONE ─────────────────────────────────────────
+#             elif any(w in cmd for w in ["milestone","record close","kitne runs chahiye","approaching record"]):
+#                 player = find_player(cmd)
+#                 if not player:
+#                     speak("Which player sir?")
+#                     try: player = find_player(listen_once()) or listen_once().strip().title()
+#                     except: continue
+#                 speak(get_player_milestone(player))
+
+#             # ── BATTING SCORECARD ─────────────────────────────────
+#             elif any(w in cmd for w in ["who is batting","batting scorecard","at crease","kaun batting"]):
+#                 speak("Checking batting sir...")
+#                 speak(get_batting_scorecard())
+
+#             # ── BOWLING SCORECARD ─────────────────────────────────
+#             elif any(w in cmd for w in ["who is bowling","bowling scorecard","current bowler","kaun bowling"]):
+#                 speak("Checking bowling sir...")
+#                 speak(get_bowling_scorecard())
+
+#             # ── IPL RECORDS ───────────────────────────────────────
+#             elif any(w in cmd for w in ["ipl records","highest score","most sixes","fastest fifty","century record","season record"]):
+#                 speak("Fetching IPL 2026 records sir...")
+#                 speak(get_ipl_records())
+
+#             # ── GRAPHS (main thread via queue) ────────────────────
+#             elif any(w in cmd for w in ["momentum","dashboard","analytics","match graph","full graph"]):
+#                 speak("Generating ML analytics dashboard sir...")
+#                 GRAPH_QUEUE.put(("momentum", None))
+
+#             elif any(w in cmd for w in ["batting graph","run graph","batting chart"]):
+#                 player = find_player(cmd)
+#                 if not player:
+#                     speak("Which batsman sir?")
+#                     try: player = find_player(listen_once()) or listen_once().strip().title()
+#                     except: continue
+#                 speak(f"Generating {player} ML batting graph sir...")
+#                 GRAPH_QUEUE.put(("batting", player))
+
+#             elif any(w in cmd for w in ["bowling graph","wicket graph","bowling chart"]):
+#                 player = find_player(cmd)
+#                 if not player:
+#                     speak("Which bowler sir?")
+#                     try: player = find_player(listen_once()) or listen_once().strip().title()
+#                     except: continue
+#                 speak(f"Generating {player} ML bowling graph sir...")
+#                 GRAPH_QUEUE.put(("bowling", player))
+
+#             elif any(w in cmd for w in ["graph","chart","dikhao"]):
+#                 player = find_player(cmd)
+#                 if not player:
+#                     speak("Which player sir?")
+#                     try: player = find_player(listen_once()) or listen_once().strip().title()
+#                     except: continue
+#                 speak("Batting or bowling graph sir?")
+#                 try:
+#                     gt = listen_once().lower()
+#                     GRAPH_QUEUE.put(("batting" if any(w in gt for w in ["bat","run"]) else "bowling", player))
+#                 except:
+#                     GRAPH_QUEUE.put(("batting", player))
+
+#             # ── HELP ──────────────────────────────────────────────
+#             elif any(w in cmd for w in ["help","kya kar sakta","features","commands","what can you do"]):
+#                 speak("Sir, I am your IPL 2026 intelligence agent with ML and LLM brain. "
+#                       "Commands: Score. Match situation. Run rate. Today match. Batting scorecard. "
+#                       "Bowling scorecard. Toss analysis. Pitch report. Weather. "
+#                       "Schedule, next match, last match. Points table. Orange cap. Purple cap. "
+#                       "Virat analysis — full ML plus LLM expert insight. "
+#                       "Virat form. Virat milestone. Compare Virat and Rohit. "
+#                       "Win prediction. Fantasy team. Auction price. Team strength. "
+#                       "MI vs CSK head to head. Virat ko kaun out kar sakta. "
+#                       "Batting graph. Bowling graph. Momentum dashboard. IPL records. News. Injury.")
+
+#             # ── EXIT ──────────────────────────────────────────────
+#             elif any(w in cmd for w in ["exit","stop","bye","goodbye","band karo","shutdown","shut down"]):
+#                 speak("Goodbye sir. Jarvis signing off. Enjoy the cricket.")
+#                 os._exit(0)
+
+#         except sr.WaitTimeoutError: pass
+#         except sr.UnknownValueError: pass
+#         except Exception as ex:
+#             print(f"[Loop] {ex}")
+#             time.sleep(1)
+
+
+# # ══════════════════════════════════════════════════════════════════════
+# #  ENTRY POINT
+# # ══════════════════════════════════════════════════════════════════════
+# if __name__ == "__main__":
+#     pythoncom.CoInitialize()
+#     speaker = win32com.client.Dispatch("SAPI.SpVoice")
+
+#     print("=" * 74)
+#     print("  JARVIS - REAL IPL 2026 INTELLIGENCE AGENT v13.0")
+
+#     # Voice in background thread
+#     vt = threading.Thread(target=jarvis_loop, args=(speaker,), daemon=True)
+#     vt.start()
+
+#     # Main thread: handle graphs (matplotlib must be on main thread)
+#     while True:
+#         try:
+#             task, arg = GRAPH_QUEUE.get(timeout=1)
+#             if task == "momentum":
+#                 draw_momentum_dashboard(MATCH_STATE)
+#             elif task == "batting":
+#                 cache = PLAYER_CACHE.get(arg.lower(), {}) if arg else {}
+#                 scores = cache.get("runs", [])
+#                 ml     = cache.get("ml")
+#                 if not scores:
+#                     raw    = get_player_raw_data(arg)
+#                     scores = raw.get("scores", [])
+#                     ml     = predict_future_score(scores) if len(scores) >= 3 else None
+#                 draw_batting_graph(arg, scores, ml)
+#             elif task == "bowling":
+#                 cache   = PLAYER_CACHE.get(arg.lower(), {}) if arg else {}
+#                 wickets = cache.get("wickets", [])
+#                 ecos    = cache.get("economies", [])
+#                 ml      = cache.get("ml")
+#                 if not wickets:
+#                     raw     = get_player_raw_data(arg)
+#                     wickets = raw.get("wickets", [])
+#                     ecos    = raw.get("economies", [])
+#                     ml      = predict_future_wickets(wickets, ecos) if len(wickets) >= 3 else None
+#                 draw_bowling_graph(arg, wickets, ecos, ml)
+#         except queue.Empty:
+#             pass
+#         except Exception as e:
+#             print(f"[Graph] {e}")
+
+import threading
+import time
+import requests
+import win32com.client
 import speech_recognition as sr
-import numpy as np
-
-# ── Project modules ────────────────────────────────────────────────
-from ml_brain   import (predict_future_score, predict_future_wickets,
-                         calculate_win_probability, extract_scores_from_text,
-                         extract_wickets_from_text)
-from llm_expert import (get_expert_analysis, get_match_insight,
-                          get_fantasy_insight, get_h2h_insight,
-                          get_pitch_insight, get_toss_insight,
-                          check_llm_status)
-from scraper    import (search, all_text, best_sentences, is_junk, clean,
-                         get_live_scorecard, get_today_match, get_schedule,
-                         get_points_table, get_orange_cap, get_purple_cap,
-                         get_player_raw_data, get_toss, get_playing11,
-                         get_injury_news, get_ipl_news)
-from graphs     import (draw_batting_graph, draw_bowling_graph,
-                          draw_momentum_dashboard)
-
-# ══════════════════════════════════════════════════════════════════════
-#  GLOBAL STATE
-# ══════════════════════════════════════════════════════════════════════
-PLAYER_CACHE    = {}
-GRAPH_QUEUE     = queue.Queue()
-tracking_active = True
-last_score      = {"wickets": -1, "runs": 0, "overs": 0.0, "rr": 0.0, "partnership": 0}
-
-MATCH_STATE = {
-    "team1": "", "team2": "", "runs": 0, "wickets": 0, "overs": 0.0,
-    "target": 0, "run_history": [], "rr_history": [], "wicket_overs": [],
-}
-
-# ══════════════════════════════════════════════════════════════════════
-#  IPL PLAYER & TEAM MAPS
-# ══════════════════════════════════════════════════════════════════════
-IPL_PLAYERS = {
-    "rohit":"Rohit Sharma","hardik":"Hardik Pandya","pandya":"Hardik Pandya",
-    "bumrah":"Jasprit Bumrah","jasprit":"Jasprit Bumrah",
-    "suryakumar":"Suryakumar Yadav","sky":"Suryakumar Yadav",
-    "tilak":"Tilak Varma","varma":"Tilak Varma","boult":"Trent Boult",
-    "dhoni":"MS Dhoni","msd":"MS Dhoni","ms":"MS Dhoni",
-    "ruturaj":"Ruturaj Gaikwad","gaikwad":"Ruturaj Gaikwad",
-    "jadeja":"Ravindra Jadeja","deepak":"Deepak Chahar","chahar":"Deepak Chahar",
-    "shivam":"Shivam Dube","dube":"Shivam Dube","pathirana":"Matheesha Pathirana",
-    "virat":"Virat Kohli","kohli":"Virat Kohli","vk":"Virat Kohli",
-    "rajat":"Rajat Patidar","patidar":"Rajat Patidar",
-    "cameron":"Cameron Green","green":"Cameron Green",
-    "phil":"Phil Salt","salt":"Phil Salt","krunal":"Krunal Pandya",
-    "shreyas":"Shreyas Iyer","iyer":"Shreyas Iyer",
-    "venkatesh":"Venkatesh Iyer","narine":"Sunil Narine","sunil":"Sunil Narine",
-    "russell":"Andre Russell","andre":"Andre Russell","rinku":"Rinku Singh",
-    "varun":"Varun Chakravarthy","starc":"Mitchell Starc",
-    "angkrish":"Angkrish Raghuvanshi","rishabh":"Rishabh Pant","pant":"Rishabh Pant",
-    "jake":"Jake Fraser-McGurk","kuldeep":"Kuldeep Yadav","axar":"Axar Patel",
-    "mukesh":"Mukesh Kumar","stubbs":"Tristan Stubbs","karun":"Karun Nair",
-    "shashank":"Shashank Singh","prabhsimran":"Prabhsimran Singh",
-    "arshdeep":"Arshdeep Singh","rossouw":"Rilee Rossouw","maxwell":"Glenn Maxwell",
-    "sanju":"Sanju Samson","samson":"Sanju Samson",
-    "yashasvi":"Yashasvi Jaiswal","jaiswal":"Yashasvi Jaiswal",
-    "riyan":"Riyan Parag","parag":"Riyan Parag","jurel":"Dhruv Jurel",
-    "hetmyer":"Shimron Hetmyer","archer":"Jofra Archer",
-    "klaasen":"Heinrich Klaasen","heinrich":"Heinrich Klaasen",
-    "abhishek":"Abhishek Sharma","travis":"Travis Head","head":"Travis Head",
-    "cummins":"Pat Cummins","harshal":"Harshal Patel","shahbaz":"Shahbaz Ahmed",
-    "kl":"KL Rahul","rahul":"KL Rahul","nicholas":"Nicholas Pooran","pooran":"Nicholas Pooran",
-    "ravi":"Ravi Bishnoi","bishnoi":"Ravi Bishnoi","mohsin":"Mohsin Khan",
-    "miller":"David Miller","david":"David Miller",
-    "shubman":"Shubman Gill","gill":"Shubman Gill",
-    "sai":"Sai Sudharsan","sudharsan":"Sai Sudharsan",
-    "buttler":"Jos Buttler","jos":"Jos Buttler","rashid":"Rashid Khan",
-    "siraj":"Mohammed Siraj","mohammed":"Mohammed Siraj",
-    "umesh":"Umesh Yadav","rabada":"Kagiso Rabada","kagiso":"Kagiso Rabada",
-    "prasidh":"Prasidh Krishna","krishna":"Prasidh Krishna",
-    "prince":"Prince Yadav","ishan":"Ishan Kishan","kishan":"Ishan Kishan",
-    "sameer":"Sameer Rizvi","rizvi":"Sameer Rizvi",
-    "unadkat":"Jaydev Unadkat","jaydev":"Jaydev Unadkat",
-}
-
-IPL_TEAMS = {
-    "mumbai":"Mumbai Indians","mi":"Mumbai Indians",
-    "chennai":"Chennai Super Kings","csk":"Chennai Super Kings",
-    "rcb":"Royal Challengers Bengaluru","bangalore":"Royal Challengers Bengaluru",
-    "bengaluru":"Royal Challengers Bengaluru",
-    "kkr":"Kolkata Knight Riders","kolkata":"Kolkata Knight Riders",
-    "delhi":"Delhi Capitals","dc":"Delhi Capitals",
-    "punjab":"Punjab Kings","pbks":"Punjab Kings",
-    "rajasthan":"Rajasthan Royals","rr":"Rajasthan Royals",
-    "hyderabad":"Sunrisers Hyderabad","srh":"Sunrisers Hyderabad",
-    "sunrisers":"Sunrisers Hyderabad",
-    "lucknow":"Lucknow Super Giants","lsg":"Lucknow Super Giants",
-    "gujarat":"Gujarat Titans","gt":"Gujarat Titans",
-}
-
-VENUE_DB = {
-    "wankhede":      "High-scoring. Fast outfield. Average 185+. Dew heavily affects second innings.",
-    "eden gardens":  "Spin-friendly. Slower surface. Average 165. Home advantage for KKR.",
-    "chinnaswamy":   "Highest scoring IPL venue. Thin air. Average 190+. Batsmen's paradise.",
-    "chepauk":       "Spin-friendly. Low bounce. Average 155-165. Batsmen struggle early.",
-    "narendra modi": "Flat pitch. Largest ground. Average 170-180. Scores slightly lower.",
-    "arun jaitley":  "Batting-friendly. Some swing early. Dew factor at night.",
-    "rajiv gandhi":  "Good batting track. Scores tend to be high. Pace gets movement initially.",
-    "sawai mansingh":"Dry surface. Good for leg spinners. Average 165.",
-    "ekana":         "Balanced pitch. LSG home advantage. Average 165-175.",
-}
-
-def find_player(cmd: str) -> str | None:
-    cmd = cmd.lower()
-    for k, v in IPL_PLAYERS.items():
-        if k in cmd: return v
-    return None
-
-def find_teams(cmd: str) -> list:
-    cmd, found = cmd.lower(), []
-    for k, v in IPL_TEAMS.items():
-        if k in cmd and v not in found: found.append(v)
-    return found
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  INTELLIGENT ANALYSIS
-# ══════════════════════════════════════════════════════════════════════
-def analyze_situation(runs, wickets, overs, target=0) -> str:
-    """Pure logic analysis — no search, no duplicates."""
-    balls_done = int(overs) * 6 + round((overs % 1) * 10)
-    balls_left = max(1, 120 - balls_done)
-    curr_rr    = round(runs / overs, 2) if overs > 0 else 0
-    insights   = []
-
-    if target > 0:
-        runs_needed = max(1, target - runs)
-        req_rr      = round(runs_needed / balls_left * 6, 2)
-        gap         = curr_rr - req_rr
-        if gap > 1:
-            insights.append("Batting team comfortably ahead of required rate.")
-        elif gap > -1:
-            insights.append(f"Close contest. Required rate {req_rr} vs current {curr_rr}.")
-        elif gap > -3:
-            insights.append(f"Tough chase. Required rate {req_rr} well above current {curr_rr}.")
-        else:
-            insights.append(f"Very difficult. Need {runs_needed} from {balls_left} balls at {req_rr}.")
-        if wickets >= 7:
-            insights.append("Tail exposed. Every run precious.")
-        elif wickets <= 2 and balls_left > 30:
-            insights.append("Plenty of wickets in hand to accelerate.")
-    else:
-        remaining  = max(1, 20 - overs)
-        wkt_factor = max(0.55, 1 - wickets * 0.06)
-        proj       = int(round(runs + curr_rr * remaining * wkt_factor))
-        if overs < 6:
-            insights.append(f"Powerplay. Projected total {proj} if form holds.")
-        elif overs < 15:
-            if wickets <= 3:
-                insights.append(f"Solid platform. Projected {proj}. Wickets in hand to push.")
-            elif wickets <= 5:
-                insights.append(f"Middle overs squeeze. Projected {proj}. Partnership critical.")
-            else:
-                insights.append(f"Wickets tumbling. Projected {proj}. Must rebuild urgently.")
-        else:
-            insights.append(f"Death overs. Final surge needed. Projected {proj}.")
-    return ". ".join(insights)
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  PLAYER FULL ANALYSIS (ML + LLM)
-# ══════════════════════════════════════════════════════════════════════
-def get_full_player_analysis(player: str, bowling: bool = False) -> str:
-    """The real agent experience — fresh data + ML + LLM."""
-    print(f"  [Agent] Scanning IPL 2026 database for {player}...")
-
-    raw = get_player_raw_data(player)
-
-    if bowling:
-        wickets   = raw.get("wickets", [])
-        economies = raw.get("economies", [])
-
-        if not wickets and raw.get("raw_text"):
-            wickets, economies = extract_wickets_from_text(raw["raw_text"])
-
-        if len(wickets) >= 3:
-            ml = predict_future_wickets(wickets, economies)
-            PLAYER_CACHE[player.lower()] = {"wickets": wickets, "economies": economies, "ml": ml}
-
-            expert = get_expert_analysis(player, wickets, ml.get("predicted", 0), bowling=True)
-
-            return (f"Sir, {player} IPL 2026 bowling analysis — "
-                    f"Recent wickets: {wickets[:5]}. "
-                    f"Average {ml['average']} per match. Economy {raw.get('economy','N/A')}. "
-                    f"ML predicts {ml['predicted']} wickets next match (trend: {ml['trend']}, "
-                    f"{ml['confidence']} confidence). "
-                    f"Expert assessment: {expert}")
-        else:
-            sents = best_sentences(search(f"{player} IPL 2026 bowling stats", mode="text", n=5),
-                                   ["wicket", "economy", "bowling", "figures"])
-            base = f"Sir, {player} bowling: " + ". ".join(sents) if sents else f"Sir, {player} bowling data insufficient."
-            expert = get_expert_analysis(player, [], 0, bowling=True)
-            return base + f" Expert note: {expert}"
-    else:
-        scores = raw.get("scores", [])
-
-        if not scores and raw.get("raw_text"):
-            scores = extract_scores_from_text(raw["raw_text"])
-
-        if len(scores) >= 3:
-            ml = predict_future_score(scores)
-            PLAYER_CACHE[player.lower()] = {"runs": scores, "ml": ml}
-
-            expert = get_expert_analysis(player, scores, ml.get("predicted", 0))
-
-            career = (f"Career: {raw['career_runs']} runs in {raw['career_matches']} matches. "
-                      if raw.get("career_runs") else "")
-
-            return (f"Sir, {player} IPL 2026 batting analysis — "
-                    f"{career}"
-                    f"Recent innings: {scores[:6]}. "
-                    f"Current average {ml['average']}. Strike rate {raw.get('strike_rate','N/A')}. "
-                    f"Peak {ml['peak']}, Floor {ml['floor']}. "
-                    f"ML predicts {ml['predicted']} runs next match "
-                    f"(trend: {ml['trend']}, {ml['confidence']} confidence). "
-                    f"Expert assessment: {expert}")
-        else:
-            sents = best_sentences(search(f"{player} IPL 2026 batting stats runs", mode="text", n=5),
-                                   ["run", "score", "average", "strike", "innings"])
-            base = f"Sir, {player}: " + ". ".join(sents) if sents else f"Sir, {player} batting data insufficient."
-            expert = get_expert_analysis(player, [], 0)
-            return base + f" Expert note: {expert}"
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  FULL MATCH SITUATION
-# ══════════════════════════════════════════════════════════════════════
-def get_full_match_situation() -> str:
-    d     = get_live_scorecard()
-    match = get_today_match()
-
-    if not d and not match:
-        return "Sir, no live match data available right now."
-    if not d:
-        return f"Sir, today's match is {match}. Live score not yet available."
-
-    runs    = d.get("runs", 0)
-    wickets = d.get("wickets", 0)
-    overs   = d.get("overs", 0.0)
-    rr      = d.get("run_rate", 0.0)
-    target  = d.get("target", 0)
-    req_rr  = d.get("req_rate", 0.0)
-    needed  = d.get("runs_needed", 0) or max(0, target - runs)
-    balls   = d.get("balls_left", 0)
-    part    = d.get("partnership", 0)
-    t1      = d.get("team1", MATCH_STATE.get("team1", "")) or "batting team"
-
-    # Win probability
-    wp = calculate_win_probability(runs, wickets, overs, target)
-
-    if target:
-        msg = (f"Sir, {t1} chasing {target}. "
-               f"Score: {runs} for {wickets} in {overs} overs. "
-               f"Need {needed} runs")
-        if balls: msg += f" from {balls} balls"
-        msg += f". Run rate {rr}"
-        if req_rr: msg += f", required {req_rr}"
-        msg += f". Win probability {wp.get('win_percent')}%."
-        if part: msg += f" Partnership {part}."
-    else:
-        proj = wp.get("projected", int(rr * 20) if rr else 0)
-        msg  = (f"Sir, {t1}: {runs} for {wickets} in {overs} overs. "
-                f"Run rate {rr}. Projected {proj}.")
-        if part: msg += f" Partnership {part}."
-
-    # LLM insight
-    score_data = {**d, "win_percent": wp.get("win_percent", 50)}
-    insight    = get_match_insight(match or "IPL 2026", score_data)
-    if insight:
-        msg += f" {insight}"
-    else:
-        msg += f" {analyze_situation(runs, wickets, overs, target)}"
-
-    # Update MATCH_STATE
-    MATCH_STATE.update(
-        runs=runs, wickets=wickets, overs=overs, target=target,
-        team1=d.get("team1", MATCH_STATE["team1"]),
-        team2=d.get("team2", MATCH_STATE["team2"]),
-    )
-    rh = MATCH_STATE["run_history"]
-    if not rh or rh[-1] != runs:
-        rh.append(runs)
-        if rr: MATCH_STATE["rr_history"].append(rr)
-
-    return msg.strip()
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  FANTASY TEAM
-# ══════════════════════════════════════════════════════════════════════
-def get_fantasy_team() -> str:
-    match = get_today_match()
-    if not match: return "Sir, today's match not found."
-    res   = search(f"{match} IPL 2026 fantasy team best XI captain picks today", mode="text", n=8)
-    sents = best_sentences(res, ["captain", "must pick", "differential", "fantasy", "key pick", "vice"])
-    players_found = []
-    txt = all_text(res)
-    for k, v in IPL_PLAYERS.items():
-        if k in txt.lower() and v not in players_found: players_found.append(v)
-        if len(players_found) >= 8: break
-    insight = get_fantasy_insight(match, players_found)
-    if sents:
-        return f"Sir, fantasy for {match}: " + ". ".join(sents[:2]) + f" {insight}"
-    return insight
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  PITCH + WEATHER
-# ══════════════════════════════════════════════════════════════════════
-def get_pitch_report() -> str:
-    from scraper import TEAM_VENUE, TEAM_CITY
-    match   = get_today_match() or "IPL 2026"
-    match_l = match.lower()
-
-    # 1. Team-based venue lookup (most reliable)
-    venue = None
-    for team_key, team_venue in TEAM_VENUE.items():
-        if team_key.lower().split()[-1].lower() in match_l or team_key.lower().split()[0].lower() in match_l:
-            venue = team_venue
-            break
-
-    # 2. Try venue DB
-    for key, info in VENUE_DB.items():
-        if key in match_l or (venue and key in venue.lower()):
-            llm_add = get_pitch_insight(venue or key, info)
-            return f"Sir, {venue or key} pitch: {info} {llm_add}"
-
-    # 3. Search for pitch info
-    res = search(f"{match} IPL 2026 pitch report surface today venue", mode="news", days="d", n=8)
-    txt = all_text(res)
-
-    # Check venue DB against search text too
-    for key, info in VENUE_DB.items():
-        if key in txt.lower():
-            return f"Sir, {key.title()} pitch: {info}"
-
-    sents = best_sentences(res, ["pitch","surface","batting","spin","pace","bounce","flat","dew"])
-    if sents:
-        llm_add = get_pitch_insight(venue or match, " ".join(sents))
-        return "Sir, pitch report: " + ". ".join(sents[:2]) + f" {llm_add}"
-    return f"Sir, {match} pitch: Expected good batting surface. Spinners may assist in later overs."
-
-def get_weather() -> str:
-    from scraper import TEAM_CITY
-    match = get_today_match() or "IPL 2026"
-
-    # 1. Try from match title - team-based city lookup
-    city = None
-    match_l = match.lower()
-    for team_key, team_city in TEAM_CITY.items():
-        if team_key in match_l:
-            city = team_city
-            break
-
-    # 2. Fallback: search for city
-    if not city:
-        cities = ["Mumbai","Chennai","Kolkata","Delhi","Bengaluru","Bangalore",
-                  "Hyderabad","Ahmedabad","Jaipur","Lucknow","Mohali","Pune","Dharamsala","Guwahati"]
-        vtxt   = all_text(search(f"{match} IPL 2026 venue city today", mode="news", days="d", n=5))
-        city   = next((c for c in cities if c.lower() in vtxt.lower()), "Mumbai")
-
-    res   = search(f"{city} weather today cricket match IPL 2026 rain dew temperature", mode="news", days="d", n=6)
-    sents = best_sentences(res, ["weather","rain","temperature","dew","humid","clear","forecast","cloud"])
-    # Filter: must mention today's city
-    valid = [s for s in sents if city.lower() in s.lower() or "today" in s.lower() or "match" in s.lower()]
-    if valid:
-        return f"Sir, {city} weather: " + ". ".join(valid[:2])
-    if sents:
-        return f"Sir, {city} weather: " + sents[0]
-    return f"Sir, {city}: Clear skies expected. Dew factor likely in second innings. Humidity moderate."
-
-def get_toss_analysis() -> str:
-    toss = get_toss()
-    if not toss: return "Sir, toss not announced yet."
-    pitch   = get_pitch_report()
-    weather = get_weather()
-    return get_toss_insight(toss, pitch, weather)
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  H2H + BOWLERS AGAINST
-# ══════════════════════════════════════════════════════════════════════
-def get_h2h(t1: str, t2: str) -> str:
-    res    = search(f"{t1} vs {t2} IPL head to head record wins history", mode="text", n=6)
-    sents  = best_sentences(res, ["won", "win", "head", "record", "beat", "times"])
-    h2h_str = ". ".join(sents[:2]) if sents else "limited head to head data"
-    return get_h2h_insight(t1, t2, h2h_str)
-
-def get_bowlers_against(batsman: str) -> str:
-    first = batsman.split()[0]
-    res   = search(f"bowler dismissed {batsman} most times IPL history", mode="text", n=8)
-    txt   = all_text(res)
-    bowlers = []
-    for bname in re.findall(r'([A-Z][a-z]+\s+[A-Z][a-z]+)\s+(?:has|have|holds|is)', txt):
-        if bname.lower() not in batsman.lower() and len(bname) > 5: bowlers.append(bname)
-    sents  = best_sentences(res, ["dismiss", "wicket", "out", "bowler"])
-    result = ""
-    if bowlers:
-        uniq   = list(dict.fromkeys(bowlers))[:3]
-        result += f"Sir, {batsman} ka kryptonite: {', '.join(uniq)}. "
-    if sents:
-        result += ". ".join(sents[:2])
-    if result:
-        expert = get_expert_analysis(batsman, [], 0)
-        return result + f" Expert note: {expert}"
-    return f"Sir, {batsman} ke against bowler matchup data nahi mila."
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MISC FEATURES
-# ══════════════════════════════════════════════════════════════════════
-def get_player_form(player: str) -> str:
-    raw    = get_player_raw_data(player)
-    scores = raw.get("scores", [])[:5]
-    if len(scores) >= 3:
-        ml     = predict_future_score(scores)
-        expert = get_expert_analysis(player, scores, ml.get("predicted", 0))
-        return (f"Sir, {player} recent form: Last {len(scores)} innings {scores}. "
-                f"Average {ml['average']}. Trend {ml['trend']}. "
-                f"ML predicts {ml['predicted']} next match. {expert}")
-    # Fallback: news search (cleaner than text)
-    sents = best_sentences(
-        search(f"{player} IPL 2026 form recent innings runs match", mode="news", days="w", n=8),
-        ["form","performing","innings","run","consistent","scored","hit"])
-    return ("Sir, " + player + " form: " + ". ".join(sents[:2]) if sents
-            else f"Sir, {player} ka recent form data nahi mila.")
-
-def get_ipl_records() -> str:
-    res   = search("IPL 2026 records highest score most sixes fastest fifty century", mode="text", n=6)
-    sents = best_sentences(res, ["record","highest","most","fastest","century","six","fifty"])
-    return ("Sir, IPL 2026 records: " + ". ".join(sents[:3])
-            if sents else "Sir, IPL 2026 records not available.")
-
-def get_auction_value(player: str) -> str:
-    res  = search(f"{player} IPL 2026 auction price crore salary bid", mode="text", n=6)
-    txt  = all_text(res)
-    m    = re.search(r'(\d+(?:\.\d+)?)\s*(?:crore|cr)\b', txt, re.IGNORECASE)
-    if m:
-        return f"Sir, {player} IPL auction value: {m.group(1)} crore."
-    sents = best_sentences(res, ["crore","auction","price","sold","bid"])
-    return f"Sir, {sents[0]}" if sents else f"Sir, {player} auction data not found."
-
-def get_team_strength(team: str) -> str:
-    res   = search(f"{team} IPL 2026 squad analysis strength weakness", mode="text", n=6)
-    t0    = team.split()[0].lower()
-    parts = []
-    for r in res:
-        for line in re.split(r'[.\n]', r.get("body", "")):
-            line = line.strip()
-            if is_junk(line) or not (20 < len(line) < 200): continue
-            if t0 in line.lower():
-                if any(w in line.lower() for w in ["strong","weak","key","squad","batting","bowling","form","balance"]):
-                    cl = clean(line)
-                    if cl and cl not in parts: parts.append(cl)
-            if len(parts) >= 3: break
-        if len(parts) >= 3: break
-    if parts:
-        return f"Sir, {team}: " + ". ".join(parts[:3])
-    return f"Sir, {team}: Balanced squad. Check injury news before finalizing picks."
-
-def get_player_milestone(player: str) -> str:
-    res   = search(f"{player} IPL 2026 milestone record close runs wickets", mode="text", n=6)
-    sents = best_sentences(res, ["milestone","record","close","away","needs","require","century"])
-    return ("Sir, " + ". ".join(sents[:2]) if sents
-            else f"Sir, {player} milestone data not found. Check career stats.")
-
-def get_batting_scorecard() -> str:
-    match  = get_today_match() or "IPL 2026"
-    res    = search(f"{match} IPL 2026 live batting at crease runs balls today", mode="news", days="d", n=8)
-    sents  = best_sentences(res, ["batting","batsman","runs off","not out","at crease","opening"])
-    kw     = match.split(" vs ")[0].split()[-1].lower() if " vs " in match else "ipl"
-    valid  = [s for s in sents if kw in s.lower() or "batting" in s.lower()]
-    if valid: return "Sir, batting update: " + ". ".join(valid[:2])
-    d = get_live_scorecard()
-    return (f"Sir, batting: {d.get('runs')}/{d.get('wickets')} in {d.get('overs')} overs."
-            if d else "Sir, batting scorecard not in live feed.")
-
-def get_bowling_scorecard() -> str:
-    match  = get_today_match() or "IPL 2026"
-    res    = search(f"{match} IPL 2026 live bowling figures economy today", mode="news", days="d", n=8)
-    sents  = best_sentences(res, ["bowling","bowler","figures","economy","spell","wickets"])
-    kw     = match.split(" vs ")[0].split()[-1].lower() if " vs " in match else "ipl"
-    valid  = [s for s in sents if kw in s.lower() or "bowl" in s.lower()]
-    return ("Sir, bowling update: " + ". ".join(valid[:2]) if valid
-            else "Sir, bowling scorecard not in live feed right now.")
-
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  NEW: LIVE OVER-BY-OVER TRACKER
-# ══════════════════════════════════════════════════════════════════════
-def get_over_by_over() -> str:
-    match = get_today_match() or "IPL 2026"
-    res   = search(f"{match} IPL 2026 live over by over update runs wickets", mode="news", days="d", n=8)
-    sents = best_sentences(res, ["over","wicket","boundary","six","four","dot","last over","this over","maiden"])
-    kw    = match.replace(" vs "," ").split()[0].lower() if match else "ipl"
-    valid = [s for s in sents if kw in s.lower() or "over" in s.lower()]
-    if valid: return "Sir, over-by-over: " + ". ".join(valid[:3])
-    d = get_live_scorecard()
-    if d: return f"Sir, {d.get('runs')}/{d.get('wickets')} in {d.get('overs')} overs. Run rate {d.get('run_rate')}."
-    return "Sir, over tracker not available right now."
-
-# ══════════════════════════════════════════════════════════════════════
-#  NEW: MATCH MOMENTUM (did batting team gain or lose momentum?)
-# ══════════════════════════════════════════════════════════════════════
-def get_match_momentum() -> str:
-    d = get_live_scorecard()
-    if not d or not d.get("runs"): return "Sir, no live match data."
-    rh = MATCH_STATE.get("run_history", [])
-    if len(rh) >= 3:
-        recent_rrs = []
-        for i in range(max(0,len(rh)-3), len(rh)):
-            if i > 0 and rh[i] > rh[i-1]:
-                recent_rrs.append(rh[i] - rh[i-1])
-        if recent_rrs:
-            avg_recent = sum(recent_rrs) / len(recent_rrs)
-            overall_rr = d.get("run_rate", 0)
-            if avg_recent > overall_rr + 1:
-                momentum = "batting team has momentum. Run rate picking up."
-            elif avg_recent < overall_rr - 1:
-                momentum = "bowling team has momentum. Batting team slowing down."
-            else:
-                momentum = "match is evenly poised. No team has clear momentum."
-            return f"Sir, current momentum: {momentum} Last few overs averaging {round(avg_recent,1)} per over."
-    return get_full_match_situation()
-
-# ══════════════════════════════════════════════════════════════════════
-#  NEW: TOP 5 PERFORMERS TODAY
-# ══════════════════════════════════════════════════════════════════════
-def get_top_performers() -> str:
-    match = get_today_match() or "IPL 2026"
-    res   = search(f"{match} IPL 2026 top performers today runs wickets standout", mode="news", days="d", n=8)
-    sents = best_sentences(res, ["scored","took","wicket","century","fifty","hit","smashed","bowling spell"])
-    kw    = match.replace(" vs "," ").split()[0].lower() if match else "ipl"
-    valid = [s for s in sents if kw in s.lower() or any(w in s.lower() for w in ["scored","wicket","took","hit"])]
-    if valid: return "Sir, top performers today: " + ". ".join(valid[:4])
-    return "Sir, top performers data not in live feed yet."
-
-# ══════════════════════════════════════════════════════════════════════
-#  NEW: SMART MATCH SUMMARY (end of innings/match)
-# ══════════════════════════════════════════════════════════════════════
-def get_match_summary() -> str:
-    match = get_today_match() or "IPL 2026"
-    res   = search(f"{match} IPL 2026 match summary innings result highlights today", mode="news", days="d", n=8)
-    sents = best_sentences(res, ["innings","result","won","beat","total","scored","chased","defended"])
-    kw    = match.replace(" vs "," ").split()[0].lower() if match else "ipl"
-    valid = [s for s in sents if kw in s.lower() or any(w in s.lower() for w in ["won","total","innings","result"])]
-    if valid: return "Sir, match summary: " + ". ".join(valid[:3])
-    d = get_live_scorecard()
-    if d: return get_full_match_situation()
-    return "Sir, match summary not available yet."
-
-# ══════════════════════════════════════════════════════════════════════
-#  NEW: PLAYER VS PLAYER HEAD TO HEAD (batsman vs bowler)
-# ══════════════════════════════════════════════════════════════════════
-def get_player_vs_player(batter: str, bowler: str) -> str:
-    res   = search(f"{batter} vs {bowler} IPL T20 record dismissals stats matchup", mode="text", n=6)
-    sents = best_sentences(res, ["dismiss","wicket","out","balls","runs","average","face","times"])
-    if sents:
-        expert = get_expert_analysis(f"{batter} vs {bowler}", [], 0)
-        return f"Sir, {batter} vs {bowler}: " + ". ".join(sents[:2]) + f" {expert}"
-    return f"Sir, {batter} vs {bowler} specific record not found. Check bowler analysis for broader data."
-
-# ══════════════════════════════════════════════════════════════════════
-#  SENTINEL - background alerts
-# ══════════════════════════════════════════════════════════════════════
-def sentinel(speaker):
-    global last_score
-    pythoncom.CoInitialize()
-    while tracking_active:
+from ddgs import DDGS # Updated to new ddgs package
+import pythoncom
+
+# --- SYSTEM CONFIG ---
+def jarvis_speak(text):
+    """Stable Windows Voice - No Terminal Spam"""
+    def speak():
         try:
-            d = get_live_scorecard()
-            if d:
-                runs    = d.get("runs", 0)
-                wickets = d.get("wickets", 0)
-                overs   = d.get("overs", 0.0)
-                rr      = d.get("run_rate", 0.0)
-                part    = d.get("partnership", 0)
+            pythoncom.CoInitialize()
+            speaker = win32com.client.Dispatch("SAPI.SpVoice")
+            speaker.Speak(text)
+        except:
+            pass
+    threading.Thread(target=speak, daemon=True).start()
+    print(f"\n[JARVIS]: {text}")
 
-                if wickets > last_score['wickets'] >= 0:
-                    ov_str = f"in {overs} overs" if overs > 0 else ""
-                    msg    = f"Sir, wicket has fallen. Score {runs} for {wickets} {ov_str}."
-                    msg   += f" {analyze_situation(runs, wickets, overs, d.get('target', 0))}"
-                    print(f"\n*** WICKET ALERT: {msg}")
-                    speaker.Speak(msg)
-                    if wickets not in MATCH_STATE["wicket_overs"]:
-                        MATCH_STATE["wicket_overs"].append(int(overs))
+# --- CORE FEATURES ---
+def handle_mega_features(query):
+    cmd = query.lower()
 
-                if last_score['runs'] > 0:
-                    if runs // 50 > last_score['runs'] // 50:
-                        speaker.Speak(f"Sir, batting team crossed {(runs // 50) * 50} runs.")
-                    if part >= 100 and last_score.get("partnership", 0) < 100:
-                        speaker.Speak("Sir, century partnership. Outstanding batting.")
-                    if rr > 12 and last_score.get("rr", 0) <= 12:
-                        speaker.Speak(f"Sir, exceptional run rate {rr} right now.")
+    if "jarvis" in cmd:
+        jarvis_speak("Yes Sir, I am here. Tell me.")
+        return True
 
-                last_score.update(runs=runs, wickets=wickets, overs=overs, rr=rr, partnership=part)
-        except Exception as e:
-            print(f"[Sentinel] {e}")
-        time.sleep(60)
+    if any(x in cmd for x in ["exit", "goodbye", "stop"]):
+        jarvis_speak("Goodbye sir, Jarvis signing off.")
+        time.sleep(2)
+        return False
 
+    # Aaj/Kal/Parso ke matches
+    if any(x in cmd for x in ["today", "aaj ka"]):
+        jarvis_speak("Sir, today is April 8, 2026. Delhi Capitals is playing Gujarat Titans at 7:30 PM.")
+    
+    elif any(x in cmd for x in ["yesterday", "kal ka result"]):
+        jarvis_speak("Yesterday, Rajasthan Royals played a great match. Let me check the final score for you.")
 
-# ══════════════════════════════════════════════════════════════════════
-#  MAIN VOICE LOOP
-# ══════════════════════════════════════════════════════════════════════
-def jarvis_loop(speaker):
-    pythoncom.CoInitialize()
+    elif any(x in cmd for x in ["tomorrow", "kal kaunsa"]):
+        jarvis_speak("Tomorrow's fixture is KKR versus LSG at Eden Gardens.")
 
-    def speak(text: str):
-        print(f"\nJarvis: {text}\n")
-        speaker.Speak(text)
+    # Live Data & Predictions
+    elif any(x in cmd for x in ["score", "situation", "table", "predict", "analy"]):
+        jarvis_speak("Fetching data from the live server...")
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(f"IPL 2026 {cmd}", max_results=1))
+                if results:
+                    print(f"\n[INTEL]: {results[0]['body']}")
+                    jarvis_speak("Analysis complete.")
+        except:
+            jarvis_speak("Network error sir, please check your connection.")
 
-    def listen_once(timeout: int = 8) -> str:
-        with sr.Microphone() as src:
-            rec.adjust_for_ambient_noise(src, duration=0.3)
-            audio = rec.listen(src, timeout=timeout, phrase_time_limit=8)
-        return rec.recognize_google(audio, language="en-IN").strip()
+    return True
 
-    threading.Thread(target=sentinel, args=(speaker,), daemon=True).start()
+# --- SILENT MAIN LOOP ---
+def start_jarvis():
     rec = sr.Recognizer()
     rec.dynamic_energy_threshold = True
-
-    llm_st = check_llm_status()
-    speak(f"Jarvis online, sir. IPL 2026 agent ready. {llm_st}. How can I assist you?")
-
+    
+    print("--- JARVIS V23.0 (SILENT MODE) ---")
+    print("System is active. Speak now...")
+    jarvis_speak("Jarvis online and listening silently, sir.")
+    
     while True:
         try:
             with sr.Microphone() as src:
-                print("[Listening]")
-                rec.adjust_for_ambient_noise(src, duration=0.5)
-                audio = rec.listen(src, timeout=10, phrase_time_limit=10)
-            print("[Recognizing]")
-            cmd = rec.recognize_google(audio, language="en-IN").lower().strip()
-            print(f"You said: '{cmd}'")
-
-            # ── WAKE ──────────────────────────────────────────────
-            if cmd.strip() in ["jarvis", "hey jarvis"]:
-                speak("Yes sir, ready.")
-
-            # ── TODAY MATCH ───────────────────────────────────────
-            elif any(w in cmd for w in ["today match","aaj ka match","kiska match",
-                                         "kaun khel","ipl today","which match","aaj kaun"]):
-                speak("Checking today's match sir...")
-                ans = get_today_match()
-                speak(f"Sir, today's match: {ans}. Want the live score?" if ans
-                      else "Sir, today's match not found.")
-
-            # ── FULL SITUATION (ML + LLM) ─────────────────────────
-            elif any(w in cmd for w in ["situation","match situation","full update","poori update",
-                                         "full status","kya ho raha","complete update","what's happening"]):
-                speak("Analyzing match situation sir...")
-                speak(get_full_match_situation())
-
-            # ── LIVE SCORE ────────────────────────────────────────
-            elif any(w in cmd for w in ["score","kya hua","kitne run","live","status","update","kya score"]) and "highest" not in cmd:
-                speak("Fetching fresh score sir...")
-                d = get_live_scorecard()
-                if d:
-                    msg = (f"Sir, {d.get('runs','?')} for {d.get('wickets','?')} "
-                           f"in {d.get('overs','?')} overs. Run rate {d.get('run_rate','?')}.")
-                    msg += f" {analyze_situation(d['runs'], d.get('wickets',0), d['overs'], d.get('target',0))}"
-                    speak(msg)
-                else:
-                    ans = get_today_match()
-                    speak(f"Sir, live score not available. Today: {ans}." if ans
-                          else "Sir, no live match right now.")
-
-            # ── RUN RATE ──────────────────────────────────────────
-            elif any(w in cmd for w in ["run rate","required rate","rrr","current rate","kitna rate","crr"]):
-                d = get_live_scorecard()
-                if d:
-                    msg = f"Sir, current run rate {d.get('run_rate','?')}."
-                    if d.get("req_rate"):   msg += f" Required {d['req_rate']}."
-                    if d.get("balls_left"): msg += f" {d['balls_left']} balls left."
-                    speak(msg)
-                else:
-                    speak("Sir, no live match data.")
-
-            # ── PLAYER ANALYSIS (ML + LLM) ────────────────────────
-            elif any(w in cmd for w in ["analyze","analysis","deep analysis","full analysis",
-                                         "ml analysis","expert analysis","poora analysis"]):
-                player = find_player(cmd)
-                if not player:
-                    speak("Which player sir?")
-                    try: player = find_player(listen_once()) or listen_once().strip().title()
-                    except: continue
-                bowling = any(w in cmd for w in ["bowl","wicket","bowling"])
-                speak(f"Running ML and LLM analysis for {player} sir. One moment...")
-                speak(get_full_player_analysis(player, bowling=bowling))
-
-            # ── PLAYER STATS ──────────────────────────────────────
-            elif any(w in cmd for w in ["stats","performance","kaisa khelta","batting stats","runs banaye","innings"]):
-                player = find_player(cmd)
-                if not player:
-                    speak("Which player sir?")
-                    try: player = find_player(listen_once()) or listen_once().strip().title()
-                    except: continue
-                speak(f"Fetching {player} stats sir...")
-                speak(get_full_player_analysis(player))
-
-            # ── BOWLING STATS ─────────────────────────────────────
-            elif any(w in cmd for w in ["bowling stats","bowling record","kitne wicket","bowling figures","economy"]):
-                player = find_player(cmd)
-                if not player:
-                    speak("Which bowler sir?")
-                    try: player = find_player(listen_once()) or listen_once().strip().title()
-                    except: continue
-                speak(f"Fetching {player} bowling sir...")
-                speak(get_full_player_analysis(player, bowling=True))
-
-            # ── PLAYER FORM ───────────────────────────────────────
-            elif any(w in cmd for w in ["form","recent form","last 5","kaise chal raha","current form","in form"]):
-                player = find_player(cmd)
-                if not player:
-                    speak("Which player sir?")
-                    try: player = find_player(listen_once()) or listen_once().strip().title()
-                    except: continue
-                speak(f"Analyzing {player} recent form sir...")
-                speak(get_player_form(player))
-
-            # ── WIN PREDICTION ────────────────────────────────────
-            elif any(w in cmd for w in ["predict","kaun jeetega","win","chance","jeetne","winner",
-                                         "win probability","who will win","prediction"]):
-                d = get_live_scorecard()
-                if d and d.get("runs"):
-                    wp  = calculate_win_probability(d['runs'], d.get('wickets',0),
-                                                     d.get('overs',1), d.get('target',185))
-                    msg = f"Sir, win probability: {wp.get('win_percent')}% for batting team. "
-                    msg += analyze_situation(d['runs'], d.get('wickets',0),
-                                              d.get('overs',1), d.get('target',0))
-                    expert = get_match_insight(get_today_match() or "IPL 2026",
-                                               {**d, "win_percent": wp.get("win_percent", 50)})
-                    if expert: msg += f" {expert}"
-                    speak(msg)
-                else:
-                    speak("Which player sir? Batting or bowling?")
-                    try:
-                        pc = listen_once().lower()
-                        pl = find_player(pc) or pc.strip().title()
-                        if "bowl" in pc or "wicket" in pc:
-                            r  = get_full_player_analysis(pl, bowling=True)
-                        else:
-                            r  = get_full_player_analysis(pl)
-                        speak(r)
-                    except:
-                        speak("Sir, prediction needs live match data.")
-
-            # ── SCHEDULE ──────────────────────────────────────────
-            elif any(w in cmd for w in ["next match","agle match","tomorrow","kal ka","upcoming"]):
-                speak("Checking tomorrow's fixture sir...")
-                speak(get_schedule("tomorrow"))
-
-            elif any(w in cmd for w in ["last match","yesterday","kal hua","pichle","previous match"]):
-                speak("Checking yesterday's result sir...")
-                speak(get_schedule("yesterday"))
-
-            elif any(w in cmd for w in ["schedule","fixture","kab hai","aaj ka schedule"]):
-                speak("Checking today's schedule sir...")
-                speak(get_schedule("today"))
-
-            # ── POINTS TABLE ──────────────────────────────────────
-            elif any(w in cmd for w in ["points table","standings","ranking","kaun upar","table","leaderboard","playoff"]):
-                speak("Fetching IPL standings sir...")
-                speak(get_points_table())
-
-            # ── ORANGE / PURPLE CAP ───────────────────────────────
-            elif any(w in cmd for w in ["orange cap","top scorer","most runs","leading batsman"]):
-                speak("Checking orange cap sir...")
-                speak(get_orange_cap())
-
-            elif any(w in cmd for w in ["purple cap","most wickets","leading bowler","top bowler"]):
-                speak("Checking purple cap sir...")
-                speak(get_purple_cap())
-
-            # ── PITCH ─────────────────────────────────────────────
-            elif any(w in cmd for w in ["pitch","pitch report","surface","ground report"]):
-                speak("Fetching pitch report sir...")
-                speak(get_pitch_report())
-
-            # ── WEATHER ───────────────────────────────────────────
-            elif any(w in cmd for w in ["weather","rain","mausam","barish","temperature","dew","forecast"]):
-                speak("Checking weather conditions sir...")
-                speak(get_weather())
-
-            # ── TOSS ANALYSIS ─────────────────────────────────────
-            elif any(w in cmd for w in ["toss","toss analysis","toss decision","why bat","why field"]):
-                speak("Analyzing toss sir...")
-                speak(get_toss_analysis())
-
-            # ── PLAYING 11 ────────────────────────────────────────
-            elif any(w in cmd for w in ["playing 11","playing eleven","squad","eleven","starting xi"]):
-                speak("Checking playing eleven sir...")
-                p11 = get_playing11()
-                speak(p11 if p11 else "Sir, playing eleven not announced yet.")
-
-            # ── INJURY ────────────────────────────────────────────
-            elif any(w in cmd for w in ["injury","injured","fit","fitness","ruled out","unavailable","kaun fit"]):
-                teams = find_teams(cmd)
-                speak("Checking injury updates sir...")
-                speak(get_injury_news(teams[0] if teams else None))
-
-            # ── NEWS ──────────────────────────────────────────────
-            elif any(w in cmd for w in ["news","latest","highlights","headlines","kya hua aaj","updates","breaking"]):
-                speak("Fetching latest IPL news sir...")
-                speak(get_ipl_news())
-
-            # ── FANTASY ───────────────────────────────────────────
-            elif any(w in cmd for w in ["fantasy","dream11","best 11","fantasy team","who to pick","best pick"]):
-                speak("Analyzing fantasy picks with LLM sir...")
-                speak(get_fantasy_team())
-
-            # ── AUCTION VALUE ─────────────────────────────────────
-            elif any(w in cmd for w in ["auction","price","value","crore","kitne mein","salary","worth"]):
-                player = find_player(cmd)
-                if not player:
-                    speak("Which player sir?")
-                    try: player = find_player(listen_once()) or listen_once().strip().title()
-                    except: continue
-                speak(get_auction_value(player))
-
-            # ── TEAM STRENGTH ─────────────────────────────────────
-            elif any(w in cmd for w in ["team strength","squad analysis","team form","team analysis","kaisi team"]):
-                teams = find_teams(cmd)
-                if teams:
-                    speak(f"Analyzing {teams[0]} sir...")
-                    speak(get_team_strength(teams[0]))
-                else:
-                    speak("Which team sir?")
-                    try:
-                        tc = listen_once()
-                        t  = find_teams(tc)
-                        speak(get_team_strength(t[0]) if t else "Team not found sir.")
-                    except: continue
-
-            # ── COMPARE ───────────────────────────────────────────
-            elif any(w in cmd for w in ["compare","versus","better","mukabla","kaun behtar"]):
-                plist = []
-                for k, v in IPL_PLAYERS.items():
-                    if k in cmd and v not in plist: plist.append(v)
-                if len(plist) >= 2:
-                    p1, p2 = plist[0], plist[1]
-                else:
-                    speak("Two players please sir, with 'and' in between.")
-                    try:
-                        said = listen_once()
-                        if " and " in said.lower():
-                            pts = said.lower().split(" and ")
-                            p1  = find_player(pts[0]) or pts[0].strip().title()
-                            p2  = find_player(pts[1]) or pts[1].strip().title()
-                        else:
-                            speak("Use 'and' between names sir."); continue
-                    except: continue
-                speak(f"Comparing {p1} and {p2} sir...")
-                s1 = get_full_player_analysis(p1)
-                s2 = get_full_player_analysis(p2)
-                speak(f"{s1} Now for {p2}: {s2}")
-
-            # ── HEAD TO HEAD ──────────────────────────────────────
-            elif any(w in cmd for w in ["head to head","h2h","history between"]):
-                teams = find_teams(cmd)
-                if len(teams) >= 2:
-                    speak(f"Checking {teams[0]} vs {teams[1]} with LLM analysis sir...")
-                    speak(get_h2h(teams[0], teams[1]))
-                else:
-                    speak("Sir, name two teams. Example: MI vs CSK head to head.")
-
-            # ── BOWLERS AGAINST ───────────────────────────────────
-            elif any(w in cmd for w in ["kaun out karega","weakness","kamzori","kaun out kar",
-                                         "dismiss","out kar sakta","nemesis","bowler against"]):
-                player = find_player(cmd)
-                if not player:
-                    speak("Which batsman sir?")
-                    try: player = find_player(listen_once()) or listen_once().strip().title()
-                    except: continue
-                speak(f"Analyzing threats against {player} sir...")
-                speak(get_bowlers_against(player))
-
-            # ── MILESTONE ─────────────────────────────────────────
-            elif any(w in cmd for w in ["milestone","record close","kitne runs chahiye","approaching record"]):
-                player = find_player(cmd)
-                if not player:
-                    speak("Which player sir?")
-                    try: player = find_player(listen_once()) or listen_once().strip().title()
-                    except: continue
-                speak(get_player_milestone(player))
-
-            # ── BATTING SCORECARD ─────────────────────────────────
-            elif any(w in cmd for w in ["who is batting","batting scorecard","at crease","kaun batting"]):
-                speak("Checking batting sir...")
-                speak(get_batting_scorecard())
-
-            # ── BOWLING SCORECARD ─────────────────────────────────
-            elif any(w in cmd for w in ["who is bowling","bowling scorecard","current bowler","kaun bowling"]):
-                speak("Checking bowling sir...")
-                speak(get_bowling_scorecard())
-
-            # ── IPL RECORDS ───────────────────────────────────────
-            elif any(w in cmd for w in ["ipl records","highest score","most sixes","fastest fifty","century record","season record"]):
-                speak("Fetching IPL 2026 records sir...")
-                speak(get_ipl_records())
-
-            # ── GRAPHS (main thread via queue) ────────────────────
-            elif any(w in cmd for w in ["momentum","dashboard","analytics","match graph","full graph"]):
-                speak("Generating ML analytics dashboard sir...")
-                GRAPH_QUEUE.put(("momentum", None))
-
-            elif any(w in cmd for w in ["batting graph","run graph","batting chart"]):
-                player = find_player(cmd)
-                if not player:
-                    speak("Which batsman sir?")
-                    try: player = find_player(listen_once()) or listen_once().strip().title()
-                    except: continue
-                speak(f"Generating {player} ML batting graph sir...")
-                GRAPH_QUEUE.put(("batting", player))
-
-            elif any(w in cmd for w in ["bowling graph","wicket graph","bowling chart"]):
-                player = find_player(cmd)
-                if not player:
-                    speak("Which bowler sir?")
-                    try: player = find_player(listen_once()) or listen_once().strip().title()
-                    except: continue
-                speak(f"Generating {player} ML bowling graph sir...")
-                GRAPH_QUEUE.put(("bowling", player))
-
-            elif any(w in cmd for w in ["graph","chart","dikhao"]):
-                player = find_player(cmd)
-                if not player:
-                    speak("Which player sir?")
-                    try: player = find_player(listen_once()) or listen_once().strip().title()
-                    except: continue
-                speak("Batting or bowling graph sir?")
-                try:
-                    gt = listen_once().lower()
-                    GRAPH_QUEUE.put(("batting" if any(w in gt for w in ["bat","run"]) else "bowling", player))
-                except:
-                    GRAPH_QUEUE.put(("batting", player))
-
-            # ── HELP ──────────────────────────────────────────────
-            elif any(w in cmd for w in ["help","kya kar sakta","features","commands","what can you do"]):
-                speak("Sir, I am your IPL 2026 intelligence agent with ML and LLM brain. "
-                      "Commands: Score. Match situation. Run rate. Today match. Batting scorecard. "
-                      "Bowling scorecard. Toss analysis. Pitch report. Weather. "
-                      "Schedule, next match, last match. Points table. Orange cap. Purple cap. "
-                      "Virat analysis — full ML plus LLM expert insight. "
-                      "Virat form. Virat milestone. Compare Virat and Rohit. "
-                      "Win prediction. Fantasy team. Auction price. Team strength. "
-                      "MI vs CSK head to head. Virat ko kaun out kar sakta. "
-                      "Batting graph. Bowling graph. Momentum dashboard. IPL records. News. Injury.")
-
-            # ── EXIT ──────────────────────────────────────────────
-            elif any(w in cmd for w in ["exit","stop","bye","goodbye","band karo","shutdown","shut down"]):
-                speak("Goodbye sir. Jarvis signing off. Enjoy the cricket.")
-                os._exit(0)
-
-        except sr.WaitTimeoutError: pass
-        except sr.UnknownValueError: pass
-        except Exception as ex:
-            print(f"[Loop] {ex}")
-            time.sleep(1)
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  ENTRY POINT
-# ══════════════════════════════════════════════════════════════════════
-if __name__ == "__main__":
-    pythoncom.CoInitialize()
-    speaker = win32com.client.Dispatch("SAPI.SpVoice")
-
-    print("=" * 74)
-    print("  JARVIS - REAL IPL 2026 INTELLIGENCE AGENT v13.0")
-
-    # Voice in background thread
-    vt = threading.Thread(target=jarvis_loop, args=(speaker,), daemon=True)
-    vt.start()
-
-    # Main thread: handle graphs (matplotlib must be on main thread)
-    while True:
-        try:
-            task, arg = GRAPH_QUEUE.get(timeout=1)
-            if task == "momentum":
-                draw_momentum_dashboard(MATCH_STATE)
-            elif task == "batting":
-                cache = PLAYER_CACHE.get(arg.lower(), {}) if arg else {}
-                scores = cache.get("runs", [])
-                ml     = cache.get("ml")
-                if not scores:
-                    raw    = get_player_raw_data(arg)
-                    scores = raw.get("scores", [])
-                    ml     = predict_future_score(scores) if len(scores) >= 3 else None
-                draw_batting_graph(arg, scores, ml)
-            elif task == "bowling":
-                cache   = PLAYER_CACHE.get(arg.lower(), {}) if arg else {}
-                wickets = cache.get("wickets", [])
-                ecos    = cache.get("economies", [])
-                ml      = cache.get("ml")
-                if not wickets:
-                    raw     = get_player_raw_data(arg)
-                    wickets = raw.get("wickets", [])
-                    ecos    = raw.get("economies", [])
-                    ml      = predict_future_wickets(wickets, ecos) if len(wickets) >= 3 else None
-                draw_bowling_graph(arg, wickets, ecos, ml)
-        except queue.Empty:
-            pass
+                # No print here! It listens in silence.
+                audio = rec.listen(src, timeout=None, phrase_time_limit=7)
+                
+                # Recognize quietly
+                query = rec.recognize_google(audio, language='en-in')
+                print(f"\n[YOU]: {query}") # Sirf tab dikhega jab aap bologe
+                
+                if not handle_mega_features(query):
+                    break
+        except sr.UnknownValueError:
+            continue # Silence is maintained if nothing is understood
         except Exception as e:
-            print(f"[Graph] {e}")
+            pass
+
+if __name__ == "__main__":
+    start_jarvis()

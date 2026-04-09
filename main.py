@@ -1591,4 +1591,3 @@ if __name__ == "__main__":
                 draw_bowling_graph(arg, wk, ec, ml)
         except queue.Empty: pass
         except Exception as e: print(f"[Graph] {e}")
-        #naya code 

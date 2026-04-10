@@ -1547,17 +1547,7 @@ if __name__ == "__main__":
     speaker = win32com.client.Dispatch("SAPI.SpVoice")
 
     print("=" * 70)
-    print("  JARVIS IPL 2026 - MAX LEVEL AGENT v14.0")
-    print("=" * 70)
-    print("  ENGINE  | ML (sklearn) + LLM (Ollama) + DDGS Live")
-    print("  LIVE    | score, situation, run rate, momentum, over update")
-    print("  MATCH   | toss, pitch, weather, playing 11, batting, bowling")
-    print("  INTEL   | news, injury, fantasy, orange cap, purple cap")
-    print("  ANALYSIS| ML+LLM: stats, form, milestone, compare, predict")
-    print("  RECORDS | points table, H2H, bowlers vs batsman, IPL records")
-    print("  GRAPHS  | batting, bowling, momentum dashboard")
-    print("  AUTO    | wicket alerts, milestones, RR alerts (background)")
-    print("=" * 70)
+   
     print(f"  {check_llm_status()}")
     print("=" * 70)
 

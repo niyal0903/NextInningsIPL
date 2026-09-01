@@ -473,3 +473,4 @@ def get_ipl_news() -> str:
         if len(items) >= 4: break
     return ("Sir, IPL 2026 news: " + ". ".join(items)
             if items else "Sir, no fresh news right now.")
+#updtae

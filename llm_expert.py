@@ -223,4 +223,3 @@ def check_llm_status() -> str:
     if model:
         return f"LLM online: {model}"
     return "LLM offline — using rule-based fallback"
-    #updtae
